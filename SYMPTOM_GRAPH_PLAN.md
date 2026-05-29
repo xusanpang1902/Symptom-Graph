@@ -304,4 +304,6 @@ GET /api/v1/corpus/{id}/image-url
 
 - [ ] 使用至少 20 张中文平台截图测试。
 - [ ] 记录成功样例和失败样例。
-- [ ] 编写 README，说明项目背景、技术架构、核心链路、数据表设计、Gemini Prompt 约束、私有 OSS + signed URL、图片 hash 去重和 Obsidian 输出示例。
+- [x] 编写 README，说明项目背景、技术架构、核心链路、数据表设计、Gemini Prompt 约束、私有 OSS + signed URL、图片 hash 去重和 Obsidian 输出示例。
+
+说明：Milestone 8 已新增 `README.md`，覆盖项目背景、技术架构、核心链路、数据表设计、Gemini Prompt 约束、私有 OSS + signed URL、图片 hash 去重、Obsidian 输出示例、本地运行和 API 使用说明。已新增 `docs/milestone-8-test-report.md` 记录自动化回归结果、20 张截图测试表格模板和验收口径；当前仓库内未提供真实中文平台截图样本，因此“至少 20 张中文平台截图测试”和“成功/失败样例记录”仍未完成，待提供截图和可用 MySQL/OSS/Gemini 环境后执行。
