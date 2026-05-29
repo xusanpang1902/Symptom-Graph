@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Symptom-Graph 语料采集</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --bg: #f4f0e8;
+            --ink: #231f20;
+            --muted: #6f675f;
+            --line: #ded4c8;
+            --card: #fffaf3;
+            --accent: #2f5d50;
+            --accent-soft: #e2eee9;
+            --warn: #9a5b13;
+            --error: #9f2d2d;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            background: radial-gradient(circle at top left, #fff7e8 0, var(--bg) 36%, #eee7dd 100%);
+            color: var(--ink);
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+
+        main {
+            width: min(1180px, calc(100% - 32px));
+            margin: 36px auto 56px;
+        }
+
+        .hero {
+            display: grid;
+            grid-template-columns: 1.25fr 0.75fr;
+            gap: 24px;
+            align-items: stretch;
+        }
+
+        .panel, .card {
+            background: rgba(255, 250, 243, 0.92);
+            border: 1px solid var(--line);
+            border-radius: 22px;
+            box-shadow: 0 18px 55px rgba(35, 31, 32, 0.08);
+        }
+
+        .panel {
+            padding: 28px;
+        }
+
+        h1 {
+            margin: 0 0 10px;
+            font-size: clamp(30px, 5vw, 54px);
+            letter-spacing: -0.05em;
+            line-height: 0.98;
+        }
+
+        h2, h3 {
+            margin: 0;
+            letter-spacing: -0.03em;
+        }
+
+        p {
+            color: var(--muted);
+            line-height: 1.75;
+        }
+
+        form {
+            display: grid;
+            gap: 16px;
+            margin-top: 28px;
+        }
+
+        .file-input {
+            width: 100%;
+            padding: 16px;
+            border: 1px dashed #9c9286;
+            border-radius: 16px;
+            background: #fffdf9;
+        }
+
+        .force-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            color: var(--muted);
+        }
+
+        .force-row input {
+            width: 18px;
+            height: 18px;
+        }
+
+        button {
+            min-height: 48px;
+            border: 0;
+            border-radius: 999px;
+            background: var(--accent);
+            color: #fff;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 800;
+            letter-spacing: 0.02em;
+        }
+
+        .aside {
+            padding: 24px;
+        }
+
+        .aside ul {
+            margin: 18px 0 0;
+            padding: 0;
+            list-style: none;
+            display: grid;
+            gap: 12px;
+        }
+
+        .aside li {
+            padding-left: 18px;
+            position: relative;
+            color: var(--muted);
+            line-height: 1.6;
+        }
+
+        .aside li::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 0.75em;
+            width: 7px;
+            height: 7px;
+            border-radius: 99px;
+            background: var(--accent);
+        }
+
+        .result {
+            margin-top: 24px;
+            display: grid;
+            grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+            gap: 24px;
+        }
+
+        .preview, .metadata, .records {
+            padding: 22px;
+        }
+
+        .preview img {
+            display: block;
+            width: 100%;
+            max-height: 680px;
+            object-fit: contain;
+            margin-top: 16px;
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            background: #fff;
+        }
+
+        dl {
+            display: grid;
+            grid-template-columns: 150px minmax(0, 1fr);
+            gap: 12px 16px;
+            margin: 18px 0 0;
+            word-break: break-all;
+        }
+
+        dt {
+            color: var(--muted);
+        }
+
+        dd {
+            margin: 0;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 14px;
+        }
+
+        .notice {
+            margin-top: 16px;
+            padding: 13px 15px;
+            border-radius: 14px;
+            background: var(--accent-soft);
+            color: var(--accent);
+            font-weight: 700;
+        }
+
+        .notice.force {
+            background: #fff1d8;
+            color: var(--warn);
+        }
+
+        .records {
+            grid-column: 1 / -1;
+        }
+
+        .record-grid {
+            display: grid;
+            gap: 16px;
+            margin-top: 18px;
+        }
+
+        .record {
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            background: #fffdf9;
+            padding: 18px;
+        }
+
+        .record-head {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            min-height: 28px;
+            padding: 0 10px;
+            border-radius: 999px;
+            background: #ebe4da;
+            color: #4b443e;
+            font-size: 13px;
+            font-weight: 800;
+        }
+
+        .badge.success {
+            background: var(--accent-soft);
+            color: var(--accent);
+        }
+
+        .badge.error {
+            background: #f8dddd;
+            color: var(--error);
+        }
+
+        .quote {
+            margin: 14px 0 0;
+            padding: 14px 16px;
+            border-left: 4px solid var(--accent);
+            background: #faf6ef;
+            color: #35302b;
+            line-height: 1.75;
+            white-space: pre-wrap;
+        }
+
+        .tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 14px;
+        }
+
+        .tag {
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: #efe8dd;
+            color: #3f3933;
+            font-size: 13px;
+        }
+
+        .path {
+            margin-top: 14px;
+            color: var(--muted);
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 13px;
+            word-break: break-all;
+        }
+
+        .error-text {
+            margin-top: 12px;
+            color: var(--error);
+            font-weight: 700;
+        }
+
+        @media (max-width: 860px) {
+            .hero, .result {
+                grid-template-columns: 1fr;
+            }
+
+            dl {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+<main>
+    <section class="hero">
+        <div class="panel">
+            <h1>Symptom-Graph 语料采集</h1>
+            <p>上传中文互联网截图，系统会计算图片 hash、调用 Gemini 识别可见评论、写入 MySQL，并为每条评论生成 Obsidian Markdown。</p>
+
+            <form th:action="@{/corpus/upload}" method="post" enctype="multipart/form-data">
+                <input class="file-input" type="file" name="file" accept="image/*" required>
+                <label class="force-row">
+                    <input type="checkbox" name="force" value="true">
+                    <span>强制重新识别已有截图，并覆盖原 Markdown</span>
+                </label>
+                <button type="submit">上传并识别</button>
+            </form>
+        </div>
+
+        <aside class="panel aside">
+            <h2>展示重点</h2>
+            <ul>
+                <li>重复截图默认复用历史识别结果，避免重复调用模型。</li>
+                <li>页面预览使用临时 signed URL，Markdown 只保存稳定证据链。</li>
+                <li>每条评论独立生成 Markdown，便于 Obsidian 检索和研究备注。</li>
+            </ul>
+        </aside>
+    </section>
+
+    <section class="result" th:if="${result != null}">
+        <div class="card preview">
+            <h2>截图预览</h2>
+            <p th:if="${signedUrl == null}">没有可用的 signed URL。可能是模型调用失败前没有保存 OSS 对象，或历史记录缺少 object key。</p>
+            <img th:if="${signedUrl != null}" th:src="${signedUrl}" alt="上传截图的临时 signed URL 预览">
+        </div>
+
+        <div class="card metadata">
+            <h2>采集结果</h2>
+            <div class="notice" th:if="${result.duplicate}">该截图已存在，已返回历史识别结果。</div>
+            <div class="notice force" th:if="${result.force}">已强制重新识别，并覆盖原 Markdown 输出。</div>
+            <dl>
+                <dt>capture_id</dt>
+                <dd th:text="${result.captureId}"></dd>
+                <dt>image_hash</dt>
+                <dd th:text="${result.imageHash}"></dd>
+                <dt>duplicate</dt>
+                <dd th:text="${result.duplicate}"></dd>
+                <dt>force</dt>
+                <dd th:text="${result.force}"></dd>
+                <dt>records</dt>
+                <dd th:text="${#lists.size(result.records)}"></dd>
+            </dl>
+        </div>
+
+        <div class="card records">
+            <h2>评论与 Markdown 输出</h2>
+            <div class="record-grid">
+                <article class="record" th:each="record : ${result.records}">
+                    <div class="record-head">
+                        <h3 th:text="${record.platform ?: '未知平台'} + ' 评论 ' + ${record.commentIndex}">评论</h3>
+                        <span class="badge"
+                              th:classappend="${record.parseStatus == 'SUCCESS'} ? ' success' : ' error'"
+                              th:text="${record.parseStatus}">SUCCESS</span>
+                    </div>
+
+                    <div class="quote" th:if="${record.rawContent != null and !#strings.isEmpty(record.rawContent)}" th:text="${record.rawContent}"></div>
+                    <div class="quote" th:if="${record.contextTarget != null and !#strings.isEmpty(record.contextTarget)}" th:text="${record.contextTarget}"></div>
+
+                    <div class="tags" th:if="${record.tags != null and !#lists.isEmpty(record.tags)}">
+                        <span class="tag" th:each="tag : ${record.tags}" th:text="${tag}">标签</span>
+                    </div>
+
+                    <div class="path" th:if="${record.markdownPath != null}">
+                        Markdown: <span th:text="${record.markdownPath}"></span>
+                    </div>
+
+                    <div class="error-text" th:if="${record.errorMessage != null}" th:text="${record.errorMessage}"></div>
+                </article>
+            </div>
+        </div>
+    </section>
+</main>
+</body>
+</html>
