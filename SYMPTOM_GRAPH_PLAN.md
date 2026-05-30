@@ -277,7 +277,7 @@ GET /api/v1/corpus/{id}/image-url
 - [x] 重复时直接返回已有结果。
 - [x] `force=true` 时重新识别并覆盖 Markdown。
 
-说明：Milestone 5 已新增 `CorpusIngestionService` 核心编排链路。重复图片且 `force=false` 时直接返回历史记录；`force=true` 时复用已有 OSS 对象、删除旧识别记录、重新调用 Gemini 并按相同命名规则覆盖 Markdown。Markdown 当前为最小闭环实现，详细输出规则与 Obsidian 细节继续在 Milestone 6 完善。
+说明：Milestone 5 已新增 `CorpusIngestionService` 核心编排链路。重复图片且 `force=false` 时直接返回历史记录；`force=true` 时复用已有 OSS 对象，重新调用多模态 Provider，并且只有重新识别成功后才删除旧识别记录、按相同命名规则覆盖 Markdown，避免模型失败破坏历史语料。Markdown 当前为最小闭环实现，详细输出规则与 Obsidian 细节继续在 Milestone 6 完善。
 
 ### Milestone 6：Markdown 输出
 
@@ -307,3 +307,17 @@ GET /api/v1/corpus/{id}/image-url
 - [x] 编写 README，说明项目背景、技术架构、核心链路、数据表设计、Gemini Prompt 约束、私有 OSS + signed URL、图片 hash 去重和 Obsidian 输出示例。
 
 说明：Milestone 8 已新增 `README.md`，覆盖项目背景、技术架构、核心链路、数据表设计、Gemini Prompt 约束、私有 OSS + signed URL、图片 hash 去重、Obsidian 输出示例、本地运行和 API 使用说明。已新增 `docs/milestone-8-test-report.md` 记录自动化回归结果、20 张截图测试表格模板和验收口径；当前仓库内未提供真实中文平台截图样本，因此“至少 20 张中文平台截图测试”和“成功/失败样例记录”仍未完成，待提供截图和可用 MySQL/OSS/Gemini 环境后执行。
+
+### Milestone 9：OpenRouter 多模态 Provider 接入
+
+- [x] 新增通用 `VisionRecognitionService` 接口，解除核心采集链路与 Gemini 命名绑定。
+- [x] 保留 Gemini provider 实现。
+- [x] 新增 OpenRouter provider 实现，支持 `qwen/qwen2.5-vl-72b-instruct` 等 image input 模型。
+- [x] 支持通过 `app.vision.provider` 在 `gemini` / `openrouter` 间切换。
+- [x] 复用统一 Prompt 和 JSON 解析逻辑。
+- [x] 补充 provider 路由、OpenRouter 响应解析和采集链路测试。
+- [x] 更新 README 的模型配置说明。
+
+说明：Milestone 9 已新增通用 `VisionRecognitionService` / `VisionRecognitionProvider`，核心采集链路不再直接依赖 Gemini 命名接口；新增 `ConfiguredVisionRecognitionService` 根据 `app.vision.provider` 路由到 `gemini` 或 `openrouter`；新增 OpenRouter Chat Completions 图片输入实现，默认模型调整为 `qwen/qwen3.6-flash`，以匹配当前 OpenRouter API key 允许的 Alibaba provider 并避免 `qwen/qwen2.5-vl-72b-instruct` 在 provider 限制下返回 404。Gemini 和 OpenRouter 共用统一 Prompt 与 JSON 解析器，README 已补充 OpenRouter 配置和 text-only 模型限制说明。
+
+补充：已补齐 `GET /api/v1/corpus/{id}`、`GET /api/v1/corpus/captures/{captureId}`、`GET /api/v1/corpus/{id}/image-url` 查询接口；识别成功但 `items` 为空时使用 `EMPTY_RESULT` 状态记录，不生成空语料 Markdown。Milestone 8 的 20 张真实截图测试仍由人工提供截图后执行。

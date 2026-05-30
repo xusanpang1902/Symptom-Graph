@@ -4,8 +4,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.symptomgraph.config.GeminiProperties;
-import com.symptomgraph.dto.GeminiRecognitionResult;
 import com.symptomgraph.exception.GeminiRecognitionException;
+import com.symptomgraph.exception.VisionRecognitionException;
 import com.symptomgraph.service.GeminiVisionService;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
@@ -24,48 +24,30 @@ import java.util.Map;
 public class GeminiVisionServiceImpl implements GeminiVisionService {
 
     public static final String STATUS_MODEL_FAILED = "MODEL_FAILED";
-    public static final String STATUS_PARSE_FAILED = "PARSE_FAILED";
-
-    private static final String PROMPT = """
-            你是一个截图文字提取器，只能提取截图中实际可见文字。
-
-            不得推测、不得总结、不得改写、不得补全。
-            context_target 必须是截图中可见的上下文原文。
-            raw_content 必须是截图中可见的评论原文。
-            如果无法识别，返回 null 或空数组。
-            tags 不带 #。
-            tags 必须是现象性标签，不得对发言者做心理诊断或人格判断。
-
-            只返回 JSON，不要返回 Markdown，不要解释。
-            返回结构必须严格符合：
-            {
-              "platform": "小红书",
-              "context_target": "截图中可见的上下文原文",
-              "original_publish_time": null,
-              "items": [
-                {
-                  "comment_index": 1,
-                  "raw_content": "第一条评论原文",
-                  "tags": ["医疗焦虑", "恐艾"]
-                }
-              ]
-            }
-            """;
+    public static final String STATUS_PARSE_FAILED = VisionRecognitionJsonParser.STATUS_PARSE_FAILED;
 
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
     private final GeminiProperties properties;
+    private final VisionRecognitionJsonParser jsonParser;
 
     public GeminiVisionServiceImpl(RestClient.Builder restClientBuilder,
-                                   ObjectMapper objectMapper,
-                                   GeminiProperties properties) {
+                                    ObjectMapper objectMapper,
+                                    GeminiProperties properties,
+                                    VisionRecognitionJsonParser jsonParser) {
         this.restClient = restClientBuilder.build();
         this.objectMapper = objectMapper;
         this.properties = properties;
+        this.jsonParser = jsonParser;
     }
 
     @Override
-    public GeminiRecognitionResult recognize(byte[] imageBytes, String mimeType) {
+    public String providerName() {
+        return "gemini";
+    }
+
+    @Override
+    public com.symptomgraph.dto.VisionRecognitionResult recognize(byte[] imageBytes, String mimeType) {
         if (imageBytes == null || imageBytes.length == 0) {
             throw new GeminiRecognitionException(STATUS_MODEL_FAILED, "Image bytes must not be empty");
         }
@@ -78,10 +60,10 @@ public class GeminiVisionServiceImpl implements GeminiVisionService {
 
         String responseBody = callGemini(imageBytes, mimeType);
         String modelText = extractCandidateText(responseBody);
-        GeminiRecognitionResult result;
+        com.symptomgraph.dto.VisionRecognitionResult result;
         try {
             result = parseRecognitionJson(modelText);
-        } catch (GeminiRecognitionException ex) {
+        } catch (VisionRecognitionException ex) {
             throw new GeminiRecognitionException(ex.getParseStatus(), ex.getMessage(), responseBody, ex);
         }
         result.setModelRawResponse(responseBody);
@@ -121,7 +103,7 @@ public class GeminiVisionServiceImpl implements GeminiVisionService {
         return Map.of(
                 "contents", List.of(
                         Map.of("parts", List.of(
-                                Map.of("text", PROMPT),
+                                Map.of("text", VisionRecognitionPrompt.PROMPT),
                                 Map.of("inline_data", Map.of(
                                         "mime_type", mimeType,
                                         "data", base64Image
@@ -168,29 +150,7 @@ public class GeminiVisionServiceImpl implements GeminiVisionService {
         }
     }
 
-    GeminiRecognitionResult parseRecognitionJson(String modelText) {
-        String json = cleanJsonText(modelText);
-        try {
-            GeminiRecognitionResult result = objectMapper.readValue(json, GeminiRecognitionResult.class);
-            if (result.getItems() == null) {
-                result.setItems(List.of());
-            }
-            return result;
-        } catch (JsonProcessingException ex) {
-            throw new GeminiRecognitionException(STATUS_PARSE_FAILED, "Gemini recognition result is not valid JSON", modelText, ex);
-        }
-    }
-
-    String cleanJsonText(String modelText) {
-        if (modelText == null) {
-            return "";
-        }
-
-        String text = modelText.trim();
-        if (text.startsWith("```")) {
-            text = text.replaceFirst("^```(?:json|JSON)?\\s*", "");
-            text = text.replaceFirst("\\s*```$", "");
-        }
-        return text.trim();
+    com.symptomgraph.dto.VisionRecognitionResult parseRecognitionJson(String modelText) {
+        return jsonParser.parse(modelText);
     }
 }

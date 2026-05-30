@@ -1,9 +1,6 @@
 package com.symptomgraph.exception;
 
-public class GeminiRecognitionException extends RuntimeException {
-
-    private final String parseStatus;
-    private final String modelRawResponse;
+public class GeminiRecognitionException extends VisionRecognitionException {
 
     public GeminiRecognitionException(String parseStatus, String message) {
         this(parseStatus, message, null, null);
@@ -14,16 +11,6 @@ public class GeminiRecognitionException extends RuntimeException {
     }
 
     public GeminiRecognitionException(String parseStatus, String message, String modelRawResponse, Throwable cause) {
-        super(message, cause);
-        this.parseStatus = parseStatus;
-        this.modelRawResponse = modelRawResponse;
-    }
-
-    public String getParseStatus() {
-        return parseStatus;
-    }
-
-    public String getModelRawResponse() {
-        return modelRawResponse;
+        super(parseStatus, message, modelRawResponse, cause);
     }
 }

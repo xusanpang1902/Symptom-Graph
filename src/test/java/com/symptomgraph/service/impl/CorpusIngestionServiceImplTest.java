@@ -1,16 +1,18 @@
 package com.symptomgraph.service.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.symptomgraph.dto.CorpusRecordResponse;
 import com.symptomgraph.dto.CorpusUploadResponse;
-import com.symptomgraph.dto.GeminiRecognitionItem;
-import com.symptomgraph.dto.GeminiRecognitionResult;
 import com.symptomgraph.dto.OssUploadResult;
+import com.symptomgraph.dto.VisionRecognitionItem;
+import com.symptomgraph.dto.VisionRecognitionResult;
 import com.symptomgraph.entity.CorpusRecord;
 import com.symptomgraph.service.CorpusRecordService;
-import com.symptomgraph.service.GeminiVisionService;
 import com.symptomgraph.service.MarkdownExportService;
 import com.symptomgraph.service.OssStorageService;
+import com.symptomgraph.service.VisionRecognitionService;
 import com.symptomgraph.util.ImageHashUtils;
+import com.symptomgraph.exception.VisionRecognitionException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -41,7 +43,7 @@ class CorpusIngestionServiceImplTest {
     private OssStorageService ossStorageService;
 
     @Mock
-    private GeminiVisionService geminiVisionService;
+    private VisionRecognitionService visionRecognitionService;
 
     @Mock
     private MarkdownExportService markdownExportService;
@@ -53,7 +55,7 @@ class CorpusIngestionServiceImplTest {
         service = new CorpusIngestionServiceImpl(
                 corpusRecordService,
                 ossStorageService,
-                geminiVisionService,
+                visionRecognitionService,
                 markdownExportService,
                 new ObjectMapper()
         );
@@ -82,7 +84,7 @@ class CorpusIngestionServiceImplTest {
         assertThat(response.getRecords()).hasSize(1);
         assertThat(response.getRecords().get(0).getTags()).containsExactly("医疗焦虑");
         verify(ossStorageService, never()).upload(any(), any());
-        verify(geminiVisionService, never()).recognize(any(), any());
+        verify(visionRecognitionService, never()).recognize(any(), any());
     }
 
     @Test
@@ -90,11 +92,11 @@ class CorpusIngestionServiceImplTest {
         byte[] imageBytes = "new-image".getBytes();
         String imageHash = ImageHashUtils.sha256Hex(imageBytes);
         MockMultipartFile file = new MockMultipartFile("file", "test.png", "image/png", imageBytes);
-        GeminiRecognitionItem item = new GeminiRecognitionItem();
+        VisionRecognitionItem item = new VisionRecognitionItem();
         item.setCommentIndex(1);
         item.setRawContent("评论原文");
         item.setTags(List.of("#医疗焦虑", " 医疗焦虑 ", "＃恐艾", ""));
-        GeminiRecognitionResult recognitionResult = new GeminiRecognitionResult();
+        VisionRecognitionResult recognitionResult = new VisionRecognitionResult();
         recognitionResult.setPlatform("小红书");
         recognitionResult.setContextTarget("上下文原文");
         recognitionResult.setItems(List.of(item));
@@ -103,7 +105,7 @@ class CorpusIngestionServiceImplTest {
 
         when(corpusRecordService.listByImageHash(imageHash)).thenReturn(List.of());
         when(ossStorageService.upload(eq(file), any())).thenReturn(new OssUploadResult("bucket", "corpus/test.png", "test.png", "image/png", imageBytes.length));
-        when(geminiVisionService.recognize(any(byte[].class), eq("image/png"))).thenReturn(recognitionResult);
+        when(visionRecognitionService.recognize(any(byte[].class), eq("image/png"))).thenReturn(recognitionResult);
         when(corpusRecordService.saveBatch(any(Collection.class))).thenAnswer(invocation -> {
             Collection<CorpusRecord> records = invocation.getArgument(0);
             records.forEach(record -> record.setId(id.getAndIncrement()));
@@ -143,13 +145,17 @@ class CorpusIngestionServiceImplTest {
         existingRecord.setOssBucket("bucket");
         existingRecord.setOssObjectKey("corpus/existing.png");
         existingRecord.setCollectedTime(LocalDateTime.now());
-        GeminiRecognitionResult recognitionResult = new GeminiRecognitionResult();
-        recognitionResult.setItems(List.of());
+        VisionRecognitionResult recognitionResult = new VisionRecognitionResult();
+        VisionRecognitionItem item = new VisionRecognitionItem();
+        item.setCommentIndex(1);
+        item.setRawContent("重新识别评论");
+        item.setTags(List.of("医疗焦虑"));
+        recognitionResult.setItems(List.of(item));
         recognitionResult.setModelRawResponse("{\"candidates\":[]}");
 
         when(corpusRecordService.listByImageHash(imageHash)).thenReturn(List.of(existingRecord));
         when(corpusRecordService.removeByImageHash(imageHash)).thenReturn(true);
-        when(geminiVisionService.recognize(any(byte[].class), eq("image/png"))).thenReturn(recognitionResult);
+        when(visionRecognitionService.recognize(any(byte[].class), eq("image/png"))).thenReturn(recognitionResult);
         when(corpusRecordService.saveBatch(any(Collection.class))).thenAnswer(invocation -> {
             Collection<CorpusRecord> records = invocation.getArgument(0);
             records.forEach(record -> record.setId(200L));
@@ -165,5 +171,61 @@ class CorpusIngestionServiceImplTest {
         assertThat(response.getCaptureId()).isEqualTo("capture_1");
         verify(corpusRecordService).removeByImageHash(imageHash);
         verify(ossStorageService, never()).upload(any(), any());
+    }
+
+    @Test
+    void ingestForceKeepsExistingRecordsWhenRecognitionFails() {
+        byte[] imageBytes = "force-failed-image".getBytes();
+        String imageHash = ImageHashUtils.sha256Hex(imageBytes);
+        MockMultipartFile file = new MockMultipartFile("file", "test.png", "image/png", imageBytes);
+        CorpusRecord existingRecord = new CorpusRecord();
+        existingRecord.setCaptureId("capture_1");
+        existingRecord.setCommentIndex(1);
+        existingRecord.setImageHash(imageHash);
+        existingRecord.setOssBucket("bucket");
+        existingRecord.setOssObjectKey("corpus/existing.png");
+
+        when(corpusRecordService.listByImageHash(imageHash)).thenReturn(List.of(existingRecord));
+        when(visionRecognitionService.recognize(any(byte[].class), eq("image/png")))
+                .thenThrow(new VisionRecognitionException("MODEL_FAILED", "model failed"));
+
+        CorpusUploadResponse response = service.ingest(file, true);
+
+        assertThat(response.isForce()).isTrue();
+        assertThat(response.getCaptureId()).isEqualTo("capture_1");
+        assertThat(response.getRecords()).singleElement()
+                .extracting(CorpusRecordResponse::getParseStatus)
+                .isEqualTo("MODEL_FAILED");
+        verify(corpusRecordService, never()).removeByImageHash(imageHash);
+        verify(corpusRecordService, never()).saveBatch(any(Collection.class));
+        verify(markdownExportService, never()).export(any(CorpusRecord.class));
+    }
+
+    @Test
+    void ingestMarksEmptyRecognitionResultWithoutExportingMarkdown() {
+        byte[] imageBytes = "empty-result-image".getBytes();
+        String imageHash = ImageHashUtils.sha256Hex(imageBytes);
+        MockMultipartFile file = new MockMultipartFile("file", "test.png", "image/png", imageBytes);
+        VisionRecognitionResult recognitionResult = new VisionRecognitionResult();
+        recognitionResult.setItems(List.of());
+        recognitionResult.setModelRawResponse("{\"candidates\":[]}");
+
+        when(corpusRecordService.listByImageHash(imageHash)).thenReturn(List.of());
+        when(ossStorageService.upload(eq(file), any())).thenReturn(new OssUploadResult("bucket", "corpus/test.png", "test.png", "image/png", imageBytes.length));
+        when(visionRecognitionService.recognize(any(byte[].class), eq("image/png"))).thenReturn(recognitionResult);
+        when(corpusRecordService.saveBatch(any(Collection.class))).thenAnswer(invocation -> {
+            Collection<CorpusRecord> records = invocation.getArgument(0);
+            records.forEach(record -> record.setId(300L));
+            return true;
+        });
+        when(corpusRecordService.updateBatchById(any(Collection.class))).thenReturn(true);
+
+        CorpusUploadResponse response = service.ingest(file, false);
+
+        assertThat(response.getRecords()).singleElement()
+                .extracting(CorpusRecordResponse::getParseStatus)
+                .isEqualTo("EMPTY_RESULT");
+        assertThat(response.getRecords().get(0).getMarkdownPath()).isNull();
+        verify(markdownExportService, never()).export(any(CorpusRecord.class));
     }
 }

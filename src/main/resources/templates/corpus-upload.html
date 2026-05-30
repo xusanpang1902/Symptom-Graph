@@ -293,7 +293,7 @@
     <section class="hero">
         <div class="panel">
             <h1>Symptom-Graph 语料采集</h1>
-            <p>上传中文互联网截图，系统会计算图片 hash、调用 Gemini 识别可见评论、写入 MySQL，并为每条评论生成 Obsidian Markdown。</p>
+            <p>上传中文互联网截图，系统会计算图片 hash、调用配置的多模态 Provider 识别可见评论、写入 MySQL，并为成功提取的每条评论生成 Obsidian Markdown。</p>
 
             <form th:action="@{/corpus/upload}" method="post" enctype="multipart/form-data">
                 <input class="file-input" type="file" name="file" accept="image/*" required>

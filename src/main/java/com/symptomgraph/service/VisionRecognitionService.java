@@ -2,7 +2,7 @@ package com.symptomgraph.service;
 
 import com.symptomgraph.dto.VisionRecognitionResult;
 
-public interface GeminiVisionService extends VisionRecognitionProvider {
+public interface VisionRecognitionService {
 
     VisionRecognitionResult recognize(byte[] imageBytes, String mimeType);
 }

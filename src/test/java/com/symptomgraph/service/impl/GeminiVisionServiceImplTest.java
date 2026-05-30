@@ -2,8 +2,8 @@ package com.symptomgraph.service.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.symptomgraph.config.GeminiProperties;
-import com.symptomgraph.dto.GeminiRecognitionResult;
-import com.symptomgraph.exception.GeminiRecognitionException;
+import com.symptomgraph.dto.VisionRecognitionResult;
+import com.symptomgraph.exception.VisionRecognitionException;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.client.RestClient;
 
@@ -15,7 +15,8 @@ class GeminiVisionServiceImplTest {
     private final GeminiVisionServiceImpl service = new GeminiVisionServiceImpl(
             RestClient.builder(),
             new ObjectMapper(),
-            new GeminiProperties()
+            new GeminiProperties(),
+            new VisionRecognitionJsonParser(new ObjectMapper())
     );
 
     @Test
@@ -37,7 +38,7 @@ class GeminiVisionServiceImplTest {
                 ```
                 """;
 
-        GeminiRecognitionResult result = service.parseRecognitionJson(modelText);
+        VisionRecognitionResult result = service.parseRecognitionJson(modelText);
 
         assertThat(result.getPlatform()).isEqualTo("小红书");
         assertThat(result.getContextTarget()).isEqualTo("上下文原文");
@@ -72,7 +73,7 @@ class GeminiVisionServiceImplTest {
     @Test
     void parseRecognitionJsonThrowsParseFailedForInvalidJson() {
         assertThatThrownBy(() -> service.parseRecognitionJson("not json"))
-                .isInstanceOf(GeminiRecognitionException.class)
+                .isInstanceOf(VisionRecognitionException.class)
                 .extracting("parseStatus")
                 .isEqualTo(GeminiVisionServiceImpl.STATUS_PARSE_FAILED);
     }

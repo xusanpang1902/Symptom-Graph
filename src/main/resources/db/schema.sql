@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS corpus_record (
     oss_object_key VARCHAR(512) NOT NULL COMMENT 'OSS Object Key',
     image_hash VARCHAR(64) NOT NULL COMMENT '图片 SHA-256',
     tags JSON NULL COMMENT '模型生成标签数组，数据库中不带 #',
-    model_raw_response JSON NULL COMMENT 'Gemini 原始返回',
+    model_raw_response JSON NULL COMMENT '多模态 Provider 原始返回',
     parse_status VARCHAR(32) NOT NULL COMMENT '解析状态',
     error_message TEXT NULL COMMENT '错误信息',
     markdown_path VARCHAR(512) NULL COMMENT 'Markdown 文件路径',

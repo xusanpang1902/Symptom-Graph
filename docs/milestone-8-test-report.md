@@ -20,7 +20,7 @@ mvn test
 执行结果：
 
 ```text
-Tests run: 13, Failures: 0, Errors: 0, Skipped: 0
+Tests run: 26, Failures: 0, Errors: 0, Skipped: 0
 BUILD SUCCESS
 ```
 
@@ -28,9 +28,13 @@ BUILD SUCCESS
 
 - 核心采集编排链路。
 - 图片 hash 去重和 `force=true` 重新识别。
-- Gemini 返回解析和异常处理。
+- Gemini / OpenRouter 返回解析和异常处理。
+- 模型 provider 路由。
 - Markdown 输出格式。
 - Thymeleaf 上传页和 signed URL 展示。
+- API 查询详情、按 capture 查询和图片 signed URL 返回。
+- `force=true` 重识别失败时保留历史记录。
+- 空识别结果 `EMPTY_RESULT` 状态处理。
 
 ## 截图测试执行前提
 
@@ -39,7 +43,7 @@ BUILD SUCCESS
 - 至少 20 张可用于测试的中文平台截图。
 - 可用 MySQL 数据库，并已执行 `src/main/resources/db/schema.sql`。
 - 可用 Aliyun OSS 私有 Bucket 配置。
-- 可用 Gemini API Key。
+- 可用多模态模型 API Key，例如 Gemini API Key，或 OpenRouter API Key + 支持 image input 的模型。
 - 应用能够通过 `/corpus/upload` 或 `/api/v1/corpus/upload` 完整访问上传链路。
 
 当前阻塞：仓库内未发现 `.png`、`.jpg`、`.jpeg` 或 `.webp` 截图样本，因此不能真实执行“至少 20 张中文平台截图测试”，也不能据此填写成功样例和失败样例。

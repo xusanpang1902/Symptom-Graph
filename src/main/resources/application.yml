@@ -25,6 +25,8 @@ knife4j:
   enable: ${KNIFE4J_ENABLE:true}
 
 app:
+  vision:
+    provider: ${VISION_PROVIDER:gemini}
   oss:
     endpoint: ${ALIYUN_OSS_ENDPOINT}
     bucket: ${ALIYUN_OSS_BUCKET}
@@ -36,5 +38,11 @@ app:
     api-key: ${GEMINI_API_KEY:}
     model: ${GEMINI_MODEL:gemini-1.5-flash}
     endpoint: ${GEMINI_ENDPOINT:https://generativelanguage.googleapis.com/v1beta}
+  openrouter:
+    api-key: ${OPENROUTER_API_KEY:}
+    model: ${OPENROUTER_MODEL:}
+    endpoint: ${OPENROUTER_ENDPOINT:https://openrouter.ai/api/v1}
+    referer: ${OPENROUTER_REFERER:}
+    title: ${OPENROUTER_TITLE:Symptom-Graph}
   markdown:
     output-dir: ${OBSIDIAN_OUTPUT_DIR:obsidian-output}

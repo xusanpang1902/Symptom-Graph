@@ -12,7 +12,7 @@ MVP 目标不是完整舆情平台，而是完成一条稳定、可展示、可�
 - MyBatis-Plus
 - MySQL 8.0
 - Aliyun OSS 私有 Bucket
-- Gemini 多模态 API
+- Gemini / OpenRouter 多模态 Provider
 - Knife4j / OpenAPI
 - Java File I/O Markdown 输出
 
@@ -23,14 +23,14 @@ MVP 目标不是完整舆情平台，而是完成一条稳定、可展示、可�
 -> 计算 SHA-256 image_hash
 -> 根据 image_hash 查询是否重复
 -> 非重复时上传 OSS 私有 Bucket
--> 调用 Gemini 多模态 API
+-> 调用配置的多模态 Provider
 -> 解析截图中所有可见评论
 -> 多条语料写入 MySQL
 -> 为每条语料生成一个 Markdown 文件
 -> Thymeleaf 页面展示识别结果与 signed URL 图片预览
 ```
 
-重复图片默认跳过 OSS 上传和 Gemini 调用，直接返回历史识别结果。传入 `force=true` 时会复用已有 OSS 对象，删除旧识别记录，重新调用 Gemini，并按稳定文件名覆盖 Markdown。
+重复图片默认跳过 OSS 上传和模型调用，直接返回历史识别结果。传入 `force=true` 时会复用已有 OSS 对象，重新调用配置的多模态 Provider；只有重新识别成功后才替换旧识别记录并按稳定文件名覆盖 Markdown，避免模型失败破坏历史语料。
 
 ## 数据表设计
 
@@ -50,17 +50,32 @@ MVP 使用单表 `corpus_record` 表达一图多评论。
 | `oss_object_key` | OSS Object Key |
 | `image_hash` | 图片 SHA-256 |
 | `tags` | JSON 标签数组，数据库中不带 `#` |
-| `model_raw_response` | Gemini 原始返回 |
-| `parse_status` | `SUCCESS`、`MODEL_FAILED`、`PARSE_FAILED` 等 |
+| `model_raw_response` | 多模态 Provider 原始返回 |
+| `parse_status` | `SUCCESS`、`MODEL_FAILED`、`PARSE_FAILED`、`EMPTY_RESULT` 等 |
 | `error_message` | 错误信息 |
 | `markdown_path` | Markdown 文件路径 |
 | `created_at` / `updated_at` | 创建和更新时间 |
 
 建表脚本位于 `src/main/resources/db/schema.sql`。
 
-## Gemini Prompt 约束
+## 模型 Provider
 
-系统调用 Gemini 时固定使用严格提取型 Prompt，核心约束如下：
+截图识别通过通用 `VisionRecognitionService` 接入，当前支持：
+
+- `gemini`：调用 Google Gemini 多模态 API。
+- `openrouter`：调用 OpenRouter Chat Completions API，适用于 `qwen/qwen2.5-vl-72b-instruct` 等支持 image input 的模型。
+
+通过环境变量切换 provider：
+
+```text
+VISION_PROVIDER=openrouter
+```
+
+OpenRouter 的 `Image` 分类常指图像生成模型，不等于截图理解。Symptom-Graph 需要支持 image input 的多模态理解模型；text-only 模型不能直接处理截图。
+
+## Prompt 约束
+
+系统调用多模态模型时固定使用严格提取型 Prompt，核心约束如下：
 
 ```text
 只能提取截图中实际可见文字。
@@ -104,9 +119,9 @@ Markdown 文件不会保存 signed URL，避免链接过期后污染长期研究
 
 上传文件会先计算 SHA-256：
 
-- `force=false` 且 `image_hash` 已存在：直接返回历史记录，不上传 OSS，不调用 Gemini。
+- `force=false` 且 `image_hash` 已存在：直接返回历史记录，不上传 OSS，不调用模型。
 - `force=true` 且 `image_hash` 已存在：复用已有 OSS 对象，重新识别，覆盖同名 Markdown。
-- `image_hash` 不存在：上传 OSS，调用 Gemini，入库并输出 Markdown。
+- `image_hash` 不存在：上传 OSS，调用模型，入库并输出 Markdown。
 
 ## Obsidian Markdown 输出
 
@@ -181,7 +196,8 @@ ALIYUN_OSS_ENDPOINT=your_oss_endpoint
 ALIYUN_OSS_BUCKET=your_private_bucket
 ALIYUN_OSS_ACCESS_KEY_ID=your_access_key_id
 ALIYUN_OSS_ACCESS_KEY_SECRET=your_access_key_secret
-GEMINI_API_KEY=your_gemini_api_key
+VISION_PROVIDER=openrouter
+OPENROUTER_API_KEY=your_openrouter_api_key
 ```
 
 常用可选环境变量：
@@ -193,10 +209,25 @@ MYSQL_PORT=3306
 MYSQL_DATABASE=symptom_graph
 ALIYUN_OSS_OBJECT_PREFIX=corpus/
 ALIYUN_OSS_SIGNED_URL_EXPIRATION_MINUTES=30
+OBSIDIAN_OUTPUT_DIR=obsidian-output
+GEMINI_API_KEY=your_gemini_api_key
 GEMINI_MODEL=gemini-1.5-flash
 GEMINI_ENDPOINT=https://generativelanguage.googleapis.com/v1beta
-OBSIDIAN_OUTPUT_DIR=obsidian-output
+OPENROUTER_MODEL=qwen/qwen3.6-flash
+OPENROUTER_ENDPOINT=https://openrouter.ai/api/v1
+OPENROUTER_REFERER=
+OPENROUTER_TITLE=Symptom-Graph
 ```
+
+Windows PowerShell 中可用以下命令确认当前终端进程是否能读取环境变量：
+
+```powershell
+$env:VISION_PROVIDER
+$env:OPENROUTER_MODEL
+if ($env:OPENROUTER_API_KEY) { "OPENROUTER_API_KEY is set" } else { "OPENROUTER_API_KEY is missing" }
+```
+
+如果通过系统环境变量界面新增变量，需要重启终端或 IDE 后再启动应用。`OPENROUTER_API_KEY` 只填写 key 本身，不需要包含 `Bearer ` 前缀。
 
 ### 3. 启动应用
 
@@ -240,6 +271,32 @@ curl -X POST "http://localhost:8080/api/v1/corpus/upload" \
   -F "force=false"
 ```
 
+### 查询详情
+
+```http
+GET /api/v1/corpus/{id}
+```
+
+### 按采集批次查询
+
+```http
+GET /api/v1/corpus/captures/{captureId}
+```
+
+### 获取图片临时访问链接
+
+```http
+GET /api/v1/corpus/{id}/image-url
+```
+
+返回：
+
+```json
+{
+  "signedUrl": "https://..."
+}
+```
+
 ## 测试
 
 运行自动化测试：
@@ -252,7 +309,11 @@ mvn test
 
 - 核心采集编排链路。
 - 图片 hash 去重和 `force=true` 重新识别。
-- Gemini 返回解析和异常处理。
+- Gemini / OpenRouter 返回解析和异常处理。
+- `force=true` 重新识别失败时保留历史记录。
+- 空识别结果标记为 `EMPTY_RESULT`，不生成空语料 Markdown。
+- 查询详情、按采集批次查询和 signed URL API。
+- 模型 provider 路由。
 - Markdown 输出格式。
 - Thymeleaf 上传页和 signed URL 展示。
 

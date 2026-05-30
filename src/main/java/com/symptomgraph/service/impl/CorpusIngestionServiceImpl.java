@@ -5,16 +5,16 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.symptomgraph.dto.CorpusRecordResponse;
 import com.symptomgraph.dto.CorpusUploadResponse;
-import com.symptomgraph.dto.GeminiRecognitionItem;
-import com.symptomgraph.dto.GeminiRecognitionResult;
 import com.symptomgraph.dto.OssUploadResult;
+import com.symptomgraph.dto.VisionRecognitionItem;
+import com.symptomgraph.dto.VisionRecognitionResult;
 import com.symptomgraph.entity.CorpusRecord;
-import com.symptomgraph.exception.GeminiRecognitionException;
+import com.symptomgraph.exception.VisionRecognitionException;
 import com.symptomgraph.service.CorpusIngestionService;
 import com.symptomgraph.service.CorpusRecordService;
-import com.symptomgraph.service.GeminiVisionService;
 import com.symptomgraph.service.MarkdownExportService;
 import com.symptomgraph.service.OssStorageService;
+import com.symptomgraph.service.VisionRecognitionService;
 import com.symptomgraph.util.ImageHashUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,23 +34,24 @@ import java.util.UUID;
 public class CorpusIngestionServiceImpl implements CorpusIngestionService {
 
     private static final String STATUS_SUCCESS = "SUCCESS";
+    private static final String STATUS_EMPTY_RESULT = "EMPTY_RESULT";
     private static final DateTimeFormatter CAPTURE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
     private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final CorpusRecordService corpusRecordService;
     private final OssStorageService ossStorageService;
-    private final GeminiVisionService geminiVisionService;
+    private final VisionRecognitionService visionRecognitionService;
     private final MarkdownExportService markdownExportService;
     private final ObjectMapper objectMapper;
 
     public CorpusIngestionServiceImpl(CorpusRecordService corpusRecordService,
                                       OssStorageService ossStorageService,
-                                      GeminiVisionService geminiVisionService,
+                                       VisionRecognitionService visionRecognitionService,
                                       MarkdownExportService markdownExportService,
                                       ObjectMapper objectMapper) {
         this.corpusRecordService = corpusRecordService;
         this.ossStorageService = ossStorageService;
-        this.geminiVisionService = geminiVisionService;
+        this.visionRecognitionService = visionRecognitionService;
         this.markdownExportService = markdownExportService;
         this.objectMapper = objectMapper;
     }
@@ -70,6 +71,7 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
         String captureId = existingRecords.isEmpty() ? generateCaptureId() : existingRecords.get(0).getCaptureId();
         String ossBucket;
         String ossObjectKey;
+        boolean replacingExistingRecords = force && !existingRecords.isEmpty();
         if (existingRecords.isEmpty()) {
             OssUploadResult uploadResult = ossStorageService.upload(file, captureId);
             ossBucket = uploadResult.getBucket();
@@ -77,13 +79,20 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
         } else {
             ossBucket = existingRecords.get(0).getOssBucket();
             ossObjectKey = existingRecords.get(0).getOssObjectKey();
-            corpusRecordService.removeByImageHash(imageHash);
         }
 
         List<CorpusRecord> records = recognizeAndBuildRecords(imageBytes, file.getContentType(), captureId, imageHash, ossBucket, ossObjectKey);
+        if (replacingExistingRecords && !isSuccessfulRecognition(records)) {
+            return buildResponse(records, imageHash, false, true);
+        }
+        if (replacingExistingRecords) {
+            corpusRecordService.removeByImageHash(imageHash);
+        }
         corpusRecordService.saveBatch(records);
         for (CorpusRecord record : records) {
-            record.setMarkdownPath(markdownExportService.export(record));
+            if (STATUS_SUCCESS.equals(record.getParseStatus())) {
+                record.setMarkdownPath(markdownExportService.export(record));
+            }
         }
         corpusRecordService.updateBatchById(records);
 
@@ -97,9 +106,9 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
                                                         String ossBucket,
                                                         String ossObjectKey) {
         try {
-            GeminiRecognitionResult recognitionResult = geminiVisionService.recognize(imageBytes, mimeType);
+            VisionRecognitionResult recognitionResult = visionRecognitionService.recognize(imageBytes, mimeType);
             return buildSuccessRecords(recognitionResult, captureId, imageHash, ossBucket, ossObjectKey);
-        } catch (GeminiRecognitionException ex) {
+        } catch (VisionRecognitionException ex) {
             CorpusRecord failedRecord = baseRecord(captureId, 1, imageHash, ossBucket, ossObjectKey);
             failedRecord.setParseStatus(ex.getParseStatus());
             failedRecord.setErrorMessage(ex.getMessage());
@@ -109,22 +118,24 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
         }
     }
 
-    private List<CorpusRecord> buildSuccessRecords(GeminiRecognitionResult result,
+    private List<CorpusRecord> buildSuccessRecords(VisionRecognitionResult result,
                                                    String captureId,
                                                    String imageHash,
                                                    String ossBucket,
                                                    String ossObjectKey) {
-        List<GeminiRecognitionItem> items = result.getItems() == null ? List.of() : result.getItems();
+        List<VisionRecognitionItem> items = result.getItems() == null ? List.of() : result.getItems();
         if (items.isEmpty()) {
             CorpusRecord record = baseRecord(captureId, 1, imageHash, ossBucket, ossObjectKey);
             applyRecognitionResult(record, result);
             record.setTags("[]");
+            record.setParseStatus(STATUS_EMPTY_RESULT);
+            record.setErrorMessage("Vision recognition returned no visible comment items");
             return List.of(record);
         }
 
         List<CorpusRecord> records = new ArrayList<>();
         for (int i = 0; i < items.size(); i++) {
-            GeminiRecognitionItem item = items.get(i);
+            VisionRecognitionItem item = items.get(i);
             Integer commentIndex = item.getCommentIndex() == null ? i + 1 : item.getCommentIndex();
             CorpusRecord record = baseRecord(captureId, commentIndex, imageHash, ossBucket, ossObjectKey);
             applyRecognitionResult(record, result);
@@ -150,7 +161,7 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
         return record;
     }
 
-    private void applyRecognitionResult(CorpusRecord record, GeminiRecognitionResult result) {
+    private void applyRecognitionResult(CorpusRecord record, VisionRecognitionResult result) {
         record.setPlatform(result.getPlatform());
         record.setContextTarget(result.getContextTarget());
         record.setOriginalPublishTime(parseOriginalPublishTime(result.getOriginalPublishTime()));
@@ -170,6 +181,10 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
                 .map(record -> CorpusRecordResponse.from(record, parseTags(record.getTags())))
                 .toList());
         return response;
+    }
+
+    private boolean isSuccessfulRecognition(List<CorpusRecord> records) {
+        return records.stream().allMatch(record -> STATUS_SUCCESS.equals(record.getParseStatus()));
     }
 
     private void validateFile(MultipartFile file) {
