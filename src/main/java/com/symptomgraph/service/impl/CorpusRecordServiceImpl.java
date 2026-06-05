@@ -5,6 +5,7 @@ import com.symptomgraph.entity.CorpusRecord;
 import com.symptomgraph.mapper.CorpusRecordMapper;
 import com.symptomgraph.service.CorpusRecordService;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.util.List;
 
@@ -24,6 +25,18 @@ public class CorpusRecordServiceImpl extends ServiceImpl<CorpusRecordMapper, Cor
         return lambdaQuery()
                 .eq(CorpusRecord::getImageHash, imageHash)
                 .exists();
+    }
+
+    @Override
+    public List<String> listDistinctImageHashes() {
+        return lambdaQuery()
+                .select(CorpusRecord::getImageHash)
+                .groupBy(CorpusRecord::getImageHash)
+                .list()
+                .stream()
+                .map(CorpusRecord::getImageHash)
+                .filter(StringUtils::hasText)
+                .toList();
     }
 
     @Override

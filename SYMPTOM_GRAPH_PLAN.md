@@ -321,3 +321,17 @@ GET /api/v1/corpus/{id}/image-url
 说明：Milestone 9 已新增通用 `VisionRecognitionService` / `VisionRecognitionProvider`，核心采集链路不再直接依赖 Gemini 命名接口；新增 `ConfiguredVisionRecognitionService` 根据 `app.vision.provider` 路由到 `gemini` 或 `openrouter`；新增 OpenRouter Chat Completions 图片输入实现，默认模型调整为 `qwen/qwen3.6-flash`，以匹配当前 OpenRouter API key 允许的 Alibaba provider 并避免 `qwen/qwen2.5-vl-72b-instruct` 在 provider 限制下返回 404。Gemini 和 OpenRouter 共用统一 Prompt 与 JSON 解析器，README 已补充 OpenRouter 配置和 text-only 模型限制说明。
 
 补充：已补齐 `GET /api/v1/corpus/{id}`、`GET /api/v1/corpus/captures/{captureId}`、`GET /api/v1/corpus/{id}/image-url` 查询接口；识别成功但 `items` 为空时使用 `EMPTY_RESULT` 状态记录，不生成空语料 Markdown。Milestone 8 的 20 张真实截图测试仍由人工提供截图后执行。
+
+### Milestone 10：Redis Bloom Filter 与 RabbitMQ 异步削峰优化
+
+- [x] 引入 Redisson 客户端依赖。
+- [x] 新增 `symptom_graph_hash_bloom` 图片 hash 布隆过滤器配置，默认预计元素 10 万、误判率 0.01。
+- [x] 新增 `ImageHashBloomFilterService`，在 Redis 未启用或访问异常时保守回退到 MySQL 去重。
+- [x] 启动时将 MySQL 中已有的 distinct `image_hash` 回灌到 Bloom Filter，避免空过滤器跳过历史数据查重。
+- [x] 修改 `CorpusIngestionService` 去重入口：先查 Bloom Filter；当 Bloom Filter 判定不存在时跳过 MySQL；当判定可能存在时继续查询 MySQL 做最终确认。
+- [ ] 引入 RabbitMQ Exchange / Queue / Routing Key 配置。
+- [ ] 上传新图时同步完成 hash、OSS 上传、`PROCESSING` 基础记录入库和 MQ 投递后立即返回。
+- [ ] 新增 Consumer 后台调用 `VisionRecognitionService`，并按识别结果更新 MySQL 与生成 Markdown。
+- [ ] 保持 `force=true` 只有重新识别成功后才覆盖旧记录的安全语义。
+
+说明：Milestone 10 阶段一已完成 Redis Bloom Filter 去重优化。当前默认 `BLOOM_FILTER_ENABLED=false`，因此未配置 Redis 时仍保持原 MySQL 去重行为；开启后通过 `REDIS_HOST`、`REDIS_PORT`、`REDIS_PASSWORD`、`REDIS_DATABASE` 连接 Redis，并初始化 `symptom_graph_hash_bloom`。Bloom Filter 仅作为 MySQL 去重前置过滤器，不作为最终存在性依据；命中时仍穿透查询 MySQL，未命中时才跳过 MySQL。RabbitMQ 异步削峰和 Consumer 后台识别尚未开始实现。

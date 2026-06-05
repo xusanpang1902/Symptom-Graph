@@ -11,6 +11,8 @@ public interface CorpusRecordService extends IService<CorpusRecord> {
 
     boolean existsByImageHash(String imageHash);
 
+    List<String> listDistinctImageHashes();
+
     List<CorpusRecord> listByCaptureId(String captureId);
 
     boolean removeByImageHash(String imageHash);

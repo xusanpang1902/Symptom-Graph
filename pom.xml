@@ -22,6 +22,7 @@
         <mybatis-plus.version>3.5.7</mybatis-plus.version>
         <aliyun-oss.version>3.18.1</aliyun-oss.version>
         <knife4j.version>4.5.0</knife4j.version>
+        <redisson.version>3.35.0</redisson.version>
     </properties>
 
     <dependencies>
@@ -68,6 +69,12 @@
             <groupId>com.github.xiaoymin</groupId>
             <artifactId>knife4j-openapi3-jakarta-spring-boot-starter</artifactId>
             <version>${knife4j.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.redisson</groupId>
+            <artifactId>redisson</artifactId>
+            <version>${redisson.version}</version>
         </dependency>
 
         <dependency>

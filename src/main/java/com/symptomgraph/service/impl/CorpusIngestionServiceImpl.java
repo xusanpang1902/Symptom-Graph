@@ -12,6 +12,7 @@ import com.symptomgraph.entity.CorpusRecord;
 import com.symptomgraph.exception.VisionRecognitionException;
 import com.symptomgraph.service.CorpusIngestionService;
 import com.symptomgraph.service.CorpusRecordService;
+import com.symptomgraph.service.ImageHashBloomFilterService;
 import com.symptomgraph.service.MarkdownExportService;
 import com.symptomgraph.service.OssStorageService;
 import com.symptomgraph.service.VisionRecognitionService;
@@ -39,17 +40,21 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
     private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final CorpusRecordService corpusRecordService;
+    private final ImageHashBloomFilterService imageHashBloomFilterService;
     private final OssStorageService ossStorageService;
     private final VisionRecognitionService visionRecognitionService;
     private final MarkdownExportService markdownExportService;
     private final ObjectMapper objectMapper;
 
+    // 构造器
     public CorpusIngestionServiceImpl(CorpusRecordService corpusRecordService,
+                                      ImageHashBloomFilterService imageHashBloomFilterService,
                                       OssStorageService ossStorageService,
-                                       VisionRecognitionService visionRecognitionService,
+                                      VisionRecognitionService visionRecognitionService,
                                       MarkdownExportService markdownExportService,
                                       ObjectMapper objectMapper) {
         this.corpusRecordService = corpusRecordService;
+        this.imageHashBloomFilterService = imageHashBloomFilterService;
         this.ossStorageService = ossStorageService;
         this.visionRecognitionService = visionRecognitionService;
         this.markdownExportService = markdownExportService;
@@ -62,8 +67,9 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
         validateFile(file);
         byte[] imageBytes = readBytes(file);
         String imageHash = ImageHashUtils.sha256Hex(imageBytes);
-        List<CorpusRecord> existingRecords = corpusRecordService.listByImageHash(imageHash);
+        List<CorpusRecord> existingRecords = findExistingRecords(imageHash);
 
+        // 若已经存在记录，且不要求强行识别，则返回已有结果
         if (!force && !existingRecords.isEmpty()) {
             return buildResponse(existingRecords, imageHash, true, false);
         }
@@ -89,6 +95,7 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
             corpusRecordService.removeByImageHash(imageHash);
         }
         corpusRecordService.saveBatch(records);
+        imageHashBloomFilterService.add(imageHash);
         for (CorpusRecord record : records) {
             if (STATUS_SUCCESS.equals(record.getParseStatus())) {
                 record.setMarkdownPath(markdownExportService.export(record));
@@ -97,6 +104,13 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
         corpusRecordService.updateBatchById(records);
 
         return buildResponse(records, imageHash, false, force);
+    }
+
+    private List<CorpusRecord> findExistingRecords(String imageHash) {
+        if (!imageHashBloomFilterService.mightContain(imageHash)) {
+            return List.of();
+        }
+        return corpusRecordService.listByImageHash(imageHash);
     }
 
     private List<CorpusRecord> recognizeAndBuildRecords(byte[] imageBytes,

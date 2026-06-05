@@ -8,6 +8,7 @@ import com.symptomgraph.dto.VisionRecognitionItem;
 import com.symptomgraph.dto.VisionRecognitionResult;
 import com.symptomgraph.entity.CorpusRecord;
 import com.symptomgraph.service.CorpusRecordService;
+import com.symptomgraph.service.ImageHashBloomFilterService;
 import com.symptomgraph.service.MarkdownExportService;
 import com.symptomgraph.service.OssStorageService;
 import com.symptomgraph.service.VisionRecognitionService;
@@ -40,6 +41,9 @@ class CorpusIngestionServiceImplTest {
     private CorpusRecordService corpusRecordService;
 
     @Mock
+    private ImageHashBloomFilterService imageHashBloomFilterService;
+
+    @Mock
     private OssStorageService ossStorageService;
 
     @Mock
@@ -54,6 +58,7 @@ class CorpusIngestionServiceImplTest {
     void setUp() {
         service = new CorpusIngestionServiceImpl(
                 corpusRecordService,
+                imageHashBloomFilterService,
                 ossStorageService,
                 visionRecognitionService,
                 markdownExportService,
@@ -73,6 +78,7 @@ class CorpusIngestionServiceImplTest {
         existingRecord.setImageHash(imageHash);
         existingRecord.setTags("[\"医疗焦虑\"]");
         existingRecord.setParseStatus("SUCCESS");
+        when(imageHashBloomFilterService.mightContain(imageHash)).thenReturn(true);
         when(corpusRecordService.listByImageHash(imageHash)).thenReturn(List.of(existingRecord));
 
         CorpusUploadResponse response = service.ingest(file, false);
@@ -103,7 +109,7 @@ class CorpusIngestionServiceImplTest {
         recognitionResult.setModelRawResponse("{\"candidates\":[]}");
         AtomicLong id = new AtomicLong(100L);
 
-        when(corpusRecordService.listByImageHash(imageHash)).thenReturn(List.of());
+        when(imageHashBloomFilterService.mightContain(imageHash)).thenReturn(false);
         when(ossStorageService.upload(eq(file), any())).thenReturn(new OssUploadResult("bucket", "corpus/test.png", "test.png", "image/png", imageBytes.length));
         when(visionRecognitionService.recognize(any(byte[].class), eq("image/png"))).thenReturn(recognitionResult);
         when(corpusRecordService.saveBatch(any(Collection.class))).thenAnswer(invocation -> {
@@ -131,6 +137,7 @@ class CorpusIngestionServiceImplTest {
                 .isEqualTo("[\"医疗焦虑\",\"恐艾\"]");
         verify(markdownExportService).export(any(CorpusRecord.class));
         verify(corpusRecordService).updateBatchById(any(Collection.class));
+        verify(imageHashBloomFilterService).add(imageHash);
     }
 
     @Test
@@ -153,6 +160,7 @@ class CorpusIngestionServiceImplTest {
         recognitionResult.setItems(List.of(item));
         recognitionResult.setModelRawResponse("{\"candidates\":[]}");
 
+        when(imageHashBloomFilterService.mightContain(imageHash)).thenReturn(true);
         when(corpusRecordService.listByImageHash(imageHash)).thenReturn(List.of(existingRecord));
         when(corpusRecordService.removeByImageHash(imageHash)).thenReturn(true);
         when(visionRecognitionService.recognize(any(byte[].class), eq("image/png"))).thenReturn(recognitionResult);
@@ -185,6 +193,7 @@ class CorpusIngestionServiceImplTest {
         existingRecord.setOssBucket("bucket");
         existingRecord.setOssObjectKey("corpus/existing.png");
 
+        when(imageHashBloomFilterService.mightContain(imageHash)).thenReturn(true);
         when(corpusRecordService.listByImageHash(imageHash)).thenReturn(List.of(existingRecord));
         when(visionRecognitionService.recognize(any(byte[].class), eq("image/png")))
                 .thenThrow(new VisionRecognitionException("MODEL_FAILED", "model failed"));
@@ -210,7 +219,7 @@ class CorpusIngestionServiceImplTest {
         recognitionResult.setItems(List.of());
         recognitionResult.setModelRawResponse("{\"candidates\":[]}");
 
-        when(corpusRecordService.listByImageHash(imageHash)).thenReturn(List.of());
+        when(imageHashBloomFilterService.mightContain(imageHash)).thenReturn(false);
         when(ossStorageService.upload(eq(file), any())).thenReturn(new OssUploadResult("bucket", "corpus/test.png", "test.png", "image/png", imageBytes.length));
         when(visionRecognitionService.recognize(any(byte[].class), eq("image/png"))).thenReturn(recognitionResult);
         when(corpusRecordService.saveBatch(any(Collection.class))).thenAnswer(invocation -> {

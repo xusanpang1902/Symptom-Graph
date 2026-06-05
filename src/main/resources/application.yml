@@ -13,6 +13,12 @@ spring:
     multipart:
       max-file-size: ${MAX_FILE_SIZE:20MB}
       max-request-size: ${MAX_REQUEST_SIZE:20MB}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
 
 mybatis-plus:
   configuration:
@@ -46,3 +52,8 @@ app:
     title: ${OPENROUTER_TITLE:Symptom-Graph}
   markdown:
     output-dir: ${OBSIDIAN_OUTPUT_DIR:obsidian-output}
+  bloom:
+    enabled: ${BLOOM_FILTER_ENABLED:false}
+    name: ${BLOOM_FILTER_NAME:symptom_graph_hash_bloom}
+    expected-insertions: ${BLOOM_FILTER_EXPECTED_INSERTIONS:100000}
+    false-probability: ${BLOOM_FILTER_FALSE_PROBABILITY:0.01}
