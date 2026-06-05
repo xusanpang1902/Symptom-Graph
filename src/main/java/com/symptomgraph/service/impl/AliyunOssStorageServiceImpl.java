@@ -1,6 +1,7 @@
 package com.symptomgraph.service.impl;
 
 import com.aliyun.oss.OSS;
+import com.aliyun.oss.model.OSSObject;
 import com.aliyun.oss.model.ObjectMetadata;
 import com.symptomgraph.config.OssProperties;
 import com.symptomgraph.dto.OssUploadResult;
@@ -70,6 +71,19 @@ public class AliyunOssStorageServiceImpl implements OssStorageService {
                 java.time.Instant.now().plusSeconds(properties.getSignedUrlExpirationMinutes() * 60)
         );
         return ossClient.generatePresignedUrl(properties.getBucket(), objectKey, expiration).toString();
+    }
+
+    @Override
+    public byte[] download(String objectKey) {
+        if (!StringUtils.hasText(objectKey)) {
+            throw new IllegalArgumentException("objectKey must not be blank");
+        }
+
+        try (OSSObject ossObject = ossClient.getObject(properties.getBucket(), objectKey)) {
+            return ossObject.getObjectContent().readAllBytes();
+        } catch (IOException ex) {
+            throw new IllegalStateException("Failed to download OSS object", ex);
+        }
     }
 
     @Override

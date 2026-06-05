@@ -28,11 +28,26 @@ MVP 目标是完成一条稳定、可展示、可扩展的采集链路。
 -> 插入 PROCESSING 占位记录
 -> 投递 RabbitMQ corpus.process.queue
 -> 上传接口立即返回 recordId / captureId
+-> Consumer 后台下载 OSS 原图并调用多模态 Provider
+-> 更新 MySQL 多条语料记录
+-> 为 SUCCESS 记录生成 Markdown
 ```
 
-当前 Milestone 10 已完成 RabbitMQ 投递阶段，新图上传会返回 `PROCESSING` 状态。后台 Consumer 调用多模态 Provider、更新多条评论记录和生成 Markdown 的逻辑将在后续阶段完成。
+新图上传会立即返回 `PROCESSING` 状态。后台 Consumer 会从私有 OSS 下载原图，调用当前配置的多模态 Provider，识别成功后更新 MySQL 并生成 Markdown。前端或调用方可通过 `recordId` 或 `captureId` 查询最终结果。
 
 重复图片默认跳过 OSS 上传和模型调用，直接返回历史识别结果。对已有图片传入 `force=true` 时，现阶段仍保留同步重识别逻辑：复用已有 OSS 对象，重新调用配置的多模态 Provider；只有重新识别成功后才替换旧识别记录并按稳定文件名覆盖 Markdown，避免模型失败破坏历史语料。
+
+## 运行依赖
+
+本项目当前需要以下外部服务：
+
+- MySQL：存储 `corpus_record` 语料记录。
+- Aliyun OSS：私有 Bucket 保存原始截图。
+- RabbitMQ：异步削峰，承载 `corpus.process.queue` 后台识别任务。
+- Redis：可选，用于 Redisson Bloom Filter 优化图片 hash 去重。
+- Gemini 或 OpenRouter：至少配置一个可用的多模态识别 Provider。
+
+Redis Bloom Filter 默认关闭，未配置 Redis 时系统仍使用 MySQL 索引查重。RabbitMQ 是异步识别链路的必要依赖，新图上传会在投递队列后返回。
 
 ## 数据表设计
 
@@ -126,6 +141,20 @@ Markdown 文件不会保存 signed URL，避免链接过期后污染长期研究
 - `image_hash` 不存在：上传 OSS，写入 `PROCESSING` 占位记录，投递 RabbitMQ 后立即返回。
 
 可选开启 Redis Bloom Filter 作为 MySQL 查重前置过滤器。Bloom Filter 判定“不存在”时跳过 MySQL；判定“可能存在”时仍穿透 MySQL 做最终确认。
+
+## 异步状态流转
+
+新图上传采用 RabbitMQ 异步处理：
+
+| 阶段 | `parse_status` | 说明 |
+| --- | --- | --- |
+| 上传成功并投递 MQ | `PROCESSING` | 已保存 OSS 原图和占位记录，等待 Consumer 识别 |
+| 识别成功 | `SUCCESS` | 第一条评论复用占位记录，后续评论追加记录，并生成 Markdown |
+| 识别为空 | `EMPTY_RESULT` | 模型返回空 `items`，不生成 Markdown |
+| 模型调用失败 | `MODEL_FAILED` | 记录模型异常和错误信息 |
+| 解析或其他异常 | `PARSE_FAILED` | 记录解析失败或后台处理异常 |
+
+后台 Consumer 通过 `VisionRecognitionService` 调用当前配置的 Provider，因此异步化不会破坏 Gemini / OpenRouter 策略模式。
 
 ## Obsidian Markdown 输出
 
@@ -222,6 +251,7 @@ RABBITMQ_VIRTUAL_HOST=/
 CORPUS_PROCESS_EXCHANGE=corpus.process.exchange
 CORPUS_PROCESS_QUEUE=corpus.process.queue
 CORPUS_PROCESS_ROUTING_KEY=corpus.process
+CORPUS_PROCESS_LISTENER_AUTO_STARTUP=true
 BLOOM_FILTER_ENABLED=false
 REDIS_HOST=localhost
 REDIS_PORT=6379
@@ -235,6 +265,17 @@ OPENROUTER_ENDPOINT=https://openrouter.ai/api/v1
 OPENROUTER_REFERER=
 OPENROUTER_TITLE=Symptom-Graph
 ```
+
+如果希望启用 Bloom Filter：
+
+```text
+BLOOM_FILTER_ENABLED=true
+BLOOM_FILTER_NAME=symptom_graph_hash_bloom
+BLOOM_FILTER_EXPECTED_INSERTIONS=100000
+BLOOM_FILTER_FALSE_PROBABILITY=0.01
+```
+
+启动时系统会把 MySQL 中已有的 distinct `image_hash` 回灌到 Bloom Filter，避免空过滤器跳过历史数据查重。
 
 Windows PowerShell 中可用以下命令确认当前终端进程是否能读取环境变量：
 
@@ -312,6 +353,36 @@ Content-Type: multipart/form-data
 | `parseStatus` | 当前为 `PROCESSING` |
 | `asyncSubmitted` | 是否已投递 RabbitMQ |
 
+示例响应：
+
+```json
+{
+  "captureId": "20260605150000_abcd1234",
+  "imageHash": "...",
+  "recordId": 123,
+  "parseStatus": "PROCESSING",
+  "duplicate": false,
+  "force": false,
+  "asyncSubmitted": true,
+  "records": [
+    {
+      "id": 123,
+      "captureId": "20260605150000_abcd1234",
+      "commentIndex": 1,
+      "imageHash": "...",
+      "tags": [],
+      "parseStatus": "PROCESSING"
+    }
+  ]
+}
+```
+
+后台处理完成后：
+
+- 识别成功：占位记录更新为第一条评论，后续评论新增为同一 `captureId` 下的记录，`parseStatus=SUCCESS`，并生成 Markdown。
+- 识别为空：占位记录更新为 `EMPTY_RESULT`，不生成 Markdown。
+- 模型或解析失败：占位记录更新为 `MODEL_FAILED` 或 `PARSE_FAILED`，写入 `errorMessage`。
+
 `curl` 示例：
 
 ```bash
@@ -357,7 +428,10 @@ mvn test
 当前测试覆盖：
 
 - 核心采集编排链路。
-- 图片 hash 去重和 `force=true` 重新识别。
+- Redis Bloom Filter 前置查重和 MySQL 回退路径。
+- RabbitMQ 新图投递、`PROCESSING` 占位记录和异步响应。
+- RabbitMQ Consumer 成功识别、空结果和模型失败状态流转。
+- 图片 hash 去重和已有图 `force=true` 重新识别。
 - Gemini / OpenRouter 返回解析和异常处理。
 - `force=true` 重新识别失败时保留历史记录。
 - 空识别结果标记为 `EMPTY_RESULT`，不生成空语料 Markdown。

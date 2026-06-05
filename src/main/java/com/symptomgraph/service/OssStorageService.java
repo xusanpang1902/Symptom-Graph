@@ -9,5 +9,7 @@ public interface OssStorageService {
 
     String generateSignedUrl(String objectKey);
 
+    byte[] download(String objectKey);
+
     String getBucket();
 }

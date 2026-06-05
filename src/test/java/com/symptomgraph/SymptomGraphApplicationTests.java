@@ -7,7 +7,8 @@ import org.springframework.boot.test.context.SpringBootTest;
         "app.oss.endpoint=https://oss-cn-hangzhou.aliyuncs.com",
         "app.oss.bucket=test-bucket",
         "app.oss.access-key-id=test-access-key-id",
-        "app.oss.access-key-secret=test-access-key-secret"
+        "app.oss.access-key-secret=test-access-key-secret",
+        "app.rabbitmq.listener-auto-startup=false"
 })
 class SymptomGraphApplicationTests {
 

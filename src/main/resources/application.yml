@@ -67,3 +67,4 @@ app:
     corpus-exchange: ${CORPUS_PROCESS_EXCHANGE:corpus.process.exchange}
     corpus-process-queue: ${CORPUS_PROCESS_QUEUE:corpus.process.queue}
     corpus-routing-key: ${CORPUS_PROCESS_ROUTING_KEY:corpus.process}
+    listener-auto-startup: ${CORPUS_PROCESS_LISTENER_AUTO_STARTUP:true}
