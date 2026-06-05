@@ -12,9 +12,15 @@ public class CorpusUploadResponse {
 
     private String imageHash;
 
+    private Long recordId;
+
+    private String parseStatus;
+
     private boolean duplicate;
 
     private boolean force;
+
+    private boolean asyncSubmitted;
 
     private List<CorpusRecordResponse> records = new ArrayList<>();
 }

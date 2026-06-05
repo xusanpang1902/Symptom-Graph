@@ -11,6 +11,8 @@ MVP 目标是完成一条稳定、可展示、可扩展的采集链路。
 - Thymeleaf
 - MyBatis-Plus
 - MySQL 8.0
+- Redis / Redisson Bloom Filter
+- RabbitMQ
 - Aliyun OSS 私有 Bucket
 - Gemini / OpenRouter 多模态 Provider
 - Knife4j / OpenAPI
@@ -21,16 +23,16 @@ MVP 目标是完成一条稳定、可展示、可扩展的采集链路。
 ```text
 上传截图
 -> 计算 SHA-256 image_hash
--> 根据 image_hash 查询是否重复
+-> Bloom Filter + MySQL 查询去重
 -> 非重复时上传 OSS 私有 Bucket
--> 调用配置的多模态 Provider
--> 解析截图中所有可见评论
--> 多条语料写入 MySQL
--> 为每条语料生成一个 Markdown 文件
--> Thymeleaf 页面展示识别结果与 signed URL 图片预览
+-> 插入 PROCESSING 占位记录
+-> 投递 RabbitMQ corpus.process.queue
+-> 上传接口立即返回 recordId / captureId
 ```
 
-重复图片默认跳过 OSS 上传和模型调用，直接返回历史识别结果。传入 `force=true` 时会复用已有 OSS 对象，重新调用配置的多模态 Provider；只有重新识别成功后才替换旧识别记录并按稳定文件名覆盖 Markdown，避免模型失败破坏历史语料。
+当前 Milestone 10 已完成 RabbitMQ 投递阶段，新图上传会返回 `PROCESSING` 状态。后台 Consumer 调用多模态 Provider、更新多条评论记录和生成 Markdown 的逻辑将在后续阶段完成。
+
+重复图片默认跳过 OSS 上传和模型调用，直接返回历史识别结果。对已有图片传入 `force=true` 时，现阶段仍保留同步重识别逻辑：复用已有 OSS 对象，重新调用配置的多模态 Provider；只有重新识别成功后才替换旧识别记录并按稳定文件名覆盖 Markdown，避免模型失败破坏历史语料。
 
 ## 数据表设计
 
@@ -51,7 +53,7 @@ MVP 使用单表 `corpus_record` 表达一图多评论。
 | `image_hash` | 图片 SHA-256 |
 | `tags` | JSON 标签数组，数据库中不带 `#` |
 | `model_raw_response` | 多模态 Provider 原始返回 |
-| `parse_status` | `SUCCESS`、`MODEL_FAILED`、`PARSE_FAILED`、`EMPTY_RESULT` 等 |
+| `parse_status` | `PROCESSING`、`SUCCESS`、`MODEL_FAILED`、`PARSE_FAILED`、`EMPTY_RESULT` 等 |
 | `error_message` | 错误信息 |
 | `markdown_path` | Markdown 文件路径 |
 | `created_at` / `updated_at` | 创建和更新时间 |
@@ -121,7 +123,9 @@ Markdown 文件不会保存 signed URL，避免链接过期后污染长期研究
 
 - `force=false` 且 `image_hash` 已存在：直接返回历史记录，不上传 OSS，不调用模型。
 - `force=true` 且 `image_hash` 已存在：复用已有 OSS 对象，重新识别，覆盖同名 Markdown。
-- `image_hash` 不存在：上传 OSS，调用模型，入库并输出 Markdown。
+- `image_hash` 不存在：上传 OSS，写入 `PROCESSING` 占位记录，投递 RabbitMQ 后立即返回。
+
+可选开启 Redis Bloom Filter 作为 MySQL 查重前置过滤器。Bloom Filter 判定“不存在”时跳过 MySQL；判定“可能存在”时仍穿透 MySQL 做最终确认。
 
 ## Obsidian Markdown 输出
 
@@ -210,6 +214,19 @@ MYSQL_DATABASE=symptom_graph
 ALIYUN_OSS_OBJECT_PREFIX=corpus/
 ALIYUN_OSS_SIGNED_URL_EXPIRATION_MINUTES=30
 OBSIDIAN_OUTPUT_DIR=obsidian-output
+RABBITMQ_HOST=localhost
+RABBITMQ_PORT=5672
+RABBITMQ_USERNAME=guest
+RABBITMQ_PASSWORD=guest
+RABBITMQ_VIRTUAL_HOST=/
+CORPUS_PROCESS_EXCHANGE=corpus.process.exchange
+CORPUS_PROCESS_QUEUE=corpus.process.queue
+CORPUS_PROCESS_ROUTING_KEY=corpus.process
+BLOOM_FILTER_ENABLED=false
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=
+REDIS_DATABASE=0
 GEMINI_API_KEY=your_gemini_api_key
 GEMINI_MODEL=gemini-1.5-flash
 GEMINI_ENDPOINT=https://generativelanguage.googleapis.com/v1beta
@@ -284,6 +301,16 @@ Content-Type: multipart/form-data
 | --- | --- | --- | --- |
 | `file` | File | 是 | 截图文件 |
 | `force` | Boolean | 否 | 是否强制重新识别，默认 `false` |
+
+非重复新图上传成功后，当前接口会立即返回 `PROCESSING` 记录，核心字段包括：
+
+| 字段 | 说明 |
+| --- | --- |
+| `recordId` | 初始 `PROCESSING` 占位记录 ID |
+| `captureId` | 本次截图采集 ID |
+| `imageHash` | 图片 SHA-256 |
+| `parseStatus` | 当前为 `PROCESSING` |
+| `asyncSubmitted` | 是否已投递 RabbitMQ |
 
 `curl` 示例：
 

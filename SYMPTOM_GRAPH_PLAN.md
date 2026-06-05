@@ -329,9 +329,9 @@ GET /api/v1/corpus/{id}/image-url
 - [x] 新增 `ImageHashBloomFilterService`，在 Redis 未启用或访问异常时保守回退到 MySQL 去重。
 - [x] 启动时将 MySQL 中已有的 distinct `image_hash` 回灌到 Bloom Filter，避免空过滤器跳过历史数据查重。
 - [x] 修改 `CorpusIngestionService` 去重入口：先查 Bloom Filter；当 Bloom Filter 判定不存在时跳过 MySQL；当判定可能存在时继续查询 MySQL 做最终确认。
-- [ ] 引入 RabbitMQ Exchange / Queue / Routing Key 配置。
-- [ ] 上传新图时同步完成 hash、OSS 上传、`PROCESSING` 基础记录入库和 MQ 投递后立即返回。
+- [x] 引入 RabbitMQ Exchange / Queue / Routing Key 配置。
+- [x] 上传新图时同步完成 hash、OSS 上传、`PROCESSING` 基础记录入库和 MQ 投递后立即返回。
 - [ ] 新增 Consumer 后台调用 `VisionRecognitionService`，并按识别结果更新 MySQL 与生成 Markdown。
 - [ ] 保持 `force=true` 只有重新识别成功后才覆盖旧记录的安全语义。
 
-说明：Milestone 10 阶段一已完成 Redis Bloom Filter 去重优化。当前默认 `BLOOM_FILTER_ENABLED=false`，因此未配置 Redis 时仍保持原 MySQL 去重行为；开启后通过 `REDIS_HOST`、`REDIS_PORT`、`REDIS_PASSWORD`、`REDIS_DATABASE` 连接 Redis，并初始化 `symptom_graph_hash_bloom`。Bloom Filter 仅作为 MySQL 去重前置过滤器，不作为最终存在性依据；命中时仍穿透查询 MySQL，未命中时才跳过 MySQL。RabbitMQ 异步削峰和 Consumer 后台识别尚未开始实现。
+说明：Milestone 10 阶段一已完成 Redis Bloom Filter 去重优化。当前默认 `BLOOM_FILTER_ENABLED=false`，因此未配置 Redis 时仍保持原 MySQL 去重行为；开启后通过 `REDIS_HOST`、`REDIS_PORT`、`REDIS_PASSWORD`、`REDIS_DATABASE` 连接 Redis，并初始化 `symptom_graph_hash_bloom`。Bloom Filter 仅作为 MySQL 去重前置过滤器，不作为最终存在性依据；命中时仍穿透查询 MySQL，未命中时才跳过 MySQL。阶段二已新增 `spring-boot-starter-amqp`、`RabbitMqConfig`、`CorpusProcessMessage` 和 `CorpusProcessMessageProducer`；新图上传现在只同步完成 OSS 上传、`PROCESSING` 占位记录入库、Bloom Filter 写入和 RabbitMQ 投递，然后立即返回 `recordId` / `captureId` / `parseStatus=PROCESSING`。重复图 `force=false` 仍返回历史结果；已有图 `force=true` 在 Consumer 未完成前暂时保留原同步重识别路径，继续保持“识别成功后才覆盖旧记录”的安全语义。Consumer 后台识别和异步 `force=true` 覆盖逻辑将在阶段三实现。

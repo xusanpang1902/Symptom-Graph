@@ -233,6 +233,11 @@
             color: var(--accent);
         }
 
+        .badge.processing {
+            background: #fff1d8;
+            color: var(--warn);
+        }
+
         .badge.error {
             background: #f8dddd;
             color: var(--error);
@@ -293,7 +298,7 @@
     <section class="hero">
         <div class="panel">
             <h1>Symptom-Graph 语料采集</h1>
-            <p>上传中文互联网截图，系统会计算图片 hash、调用配置的多模态 Provider 识别可见评论、写入 MySQL，并为成功提取的每条评论生成 Obsidian Markdown。</p>
+            <p>上传中文互联网截图，系统会计算图片 hash、上传 OSS、写入 PROCESSING 任务记录并投递 RabbitMQ；后续由后台消费者调用多模态 Provider 完成识别和 Markdown 输出。</p>
 
             <form th:action="@{/corpus/upload}" method="post" enctype="multipart/form-data">
                 <input class="file-input" type="file" name="file" accept="image/*" required>
@@ -301,7 +306,7 @@
                     <input type="checkbox" name="force" value="true">
                     <span>强制重新识别已有截图，并覆盖原 Markdown</span>
                 </label>
-                <button type="submit">上传并识别</button>
+                <button type="submit">上传并提交识别任务</button>
             </form>
         </div>
 
@@ -309,6 +314,7 @@
             <h2>展示重点</h2>
             <ul>
                 <li>重复截图默认复用历史识别结果，避免重复调用模型。</li>
+                <li>新截图会先返回 PROCESSING 状态，后台队列削峰后再执行模型识别。</li>
                 <li>页面预览使用临时 signed URL，Markdown 只保存稳定证据链。</li>
                 <li>每条评论独立生成 Markdown，便于 Obsidian 检索和研究备注。</li>
             </ul>
@@ -325,12 +331,19 @@
         <div class="card metadata">
             <h2>采集结果</h2>
             <div class="notice" th:if="${result.duplicate}">该截图已存在，已返回历史识别结果。</div>
-            <div class="notice force" th:if="${result.force}">已强制重新识别，并覆盖原 Markdown 输出。</div>
+            <div class="notice" th:if="${result.asyncSubmitted}">识别任务已提交到 RabbitMQ，当前记录处于 PROCESSING，请稍后通过 capture_id 或 record id 查询结果。</div>
+            <div class="notice force" th:if="${result.force and !result.asyncSubmitted}">已强制重新识别，并覆盖原 Markdown 输出。</div>
             <dl>
+                <dt>record_id</dt>
+                <dd th:text="${result.recordId}"></dd>
                 <dt>capture_id</dt>
                 <dd th:text="${result.captureId}"></dd>
                 <dt>image_hash</dt>
                 <dd th:text="${result.imageHash}"></dd>
+                <dt>parse_status</dt>
+                <dd th:text="${result.parseStatus}"></dd>
+                <dt>async_submitted</dt>
+                <dd th:text="${result.asyncSubmitted}"></dd>
                 <dt>duplicate</dt>
                 <dd th:text="${result.duplicate}"></dd>
                 <dt>force</dt>
@@ -347,7 +360,7 @@
                     <div class="record-head">
                         <h3 th:text="${record.platform ?: '未知平台'} + ' 评论 ' + ${record.commentIndex}">评论</h3>
                         <span class="badge"
-                              th:classappend="${record.parseStatus == 'SUCCESS'} ? ' success' : ' error'"
+                              th:classappend="${record.parseStatus == 'SUCCESS'} ? ' success' : (${record.parseStatus == 'PROCESSING'} ? ' processing' : ' error')"
                               th:text="${record.parseStatus}">SUCCESS</span>
                     </div>
 
