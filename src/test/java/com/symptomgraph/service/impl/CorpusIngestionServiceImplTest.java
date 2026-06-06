@@ -1,13 +1,18 @@
 package com.symptomgraph.service.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.symptomgraph.config.GeminiProperties;
+import com.symptomgraph.config.OpenRouterProperties;
+import com.symptomgraph.config.VisionProperties;
 import com.symptomgraph.dto.CorpusProcessMessage;
 import com.symptomgraph.dto.CorpusRecordResponse;
 import com.symptomgraph.dto.CorpusUploadResponse;
 import com.symptomgraph.dto.OssUploadResult;
 import com.symptomgraph.dto.VisionRecognitionItem;
 import com.symptomgraph.dto.VisionRecognitionResult;
+import com.symptomgraph.entity.CaptureRecord;
 import com.symptomgraph.entity.CorpusRecord;
+import com.symptomgraph.service.CaptureRecordService;
 import com.symptomgraph.service.CorpusRecordService;
 import com.symptomgraph.service.ImageHashBloomFilterService;
 import com.symptomgraph.service.MarkdownExportService;
@@ -40,6 +45,9 @@ import static org.mockito.Mockito.when;
 class CorpusIngestionServiceImplTest {
 
     @Mock
+    private CaptureRecordService captureRecordService;
+
+    @Mock
     private CorpusRecordService corpusRecordService;
 
     @Mock
@@ -62,12 +70,16 @@ class CorpusIngestionServiceImplTest {
     @BeforeEach
     void setUp() {
         service = new CorpusIngestionServiceImpl(
+                captureRecordService,
                 corpusRecordService,
                 imageHashBloomFilterService,
                 ossStorageService,
                 visionRecognitionService,
                 markdownExportService,
                 corpusProcessMessageProducer,
+                new VisionProperties(),
+                new GeminiProperties(),
+                new OpenRouterProperties(),
                 new ObjectMapper()
         );
     }
@@ -100,16 +112,16 @@ class CorpusIngestionServiceImplTest {
     }
 
     @Test
-    void ingestUploadsPersistsProcessingRecordAndPublishesMessageForNewImage() {
+    void ingestUploadsPersistsCaptureTaskAndPublishesMessageForNewImage() {
         byte[] imageBytes = "new-image".getBytes();
         String imageHash = ImageHashUtils.sha256Hex(imageBytes);
         MockMultipartFile file = new MockMultipartFile("file", "test.png", "image/png", imageBytes);
 
         when(imageHashBloomFilterService.mightContain(imageHash)).thenReturn(false);
         when(ossStorageService.upload(eq(file), any())).thenReturn(new OssUploadResult("bucket", "corpus/test.png", "test.png", "image/png", imageBytes.length));
-        when(corpusRecordService.save(any(CorpusRecord.class))).thenAnswer(invocation -> {
-            CorpusRecord record = invocation.getArgument(0);
-            record.setId(100L);
+        when(captureRecordService.save(any(CaptureRecord.class))).thenAnswer(invocation -> {
+            CaptureRecord record = invocation.getArgument(0);
+            record.setId(10L);
             return true;
         });
 
@@ -118,17 +130,22 @@ class CorpusIngestionServiceImplTest {
         assertThat(response.isDuplicate()).isFalse();
         assertThat(response.isAsyncSubmitted()).isTrue();
         assertThat(response.getImageHash()).isEqualTo(imageHash);
-        assertThat(response.getRecordId()).isEqualTo(100L);
+        assertThat(response.getCaptureRecordId()).isEqualTo(10L);
+        assertThat(response.getRecordId()).isNull();
         assertThat(response.getParseStatus()).isEqualTo("PROCESSING");
-        assertThat(response.getRecords()).hasSize(1);
-        assertThat(response.getRecords().get(0).getParseStatus()).isEqualTo("PROCESSING");
-        ArgumentCaptor<CorpusRecord> recordCaptor = ArgumentCaptor.forClass(CorpusRecord.class);
-        verify(corpusRecordService).save(recordCaptor.capture());
-        assertThat(recordCaptor.getValue().getTags()).isEqualTo("[]");
-        assertThat(recordCaptor.getValue().getOssObjectKey()).isEqualTo("corpus/test.png");
+        assertThat(response.getRecords()).isEmpty();
+        ArgumentCaptor<CaptureRecord> captureRecordCaptor = ArgumentCaptor.forClass(CaptureRecord.class);
+        verify(captureRecordService).save(captureRecordCaptor.capture());
+        assertThat(captureRecordCaptor.getValue().getCaptureId()).isEqualTo(response.getCaptureId());
+        assertThat(captureRecordCaptor.getValue().getImageHash()).isEqualTo(imageHash);
+        assertThat(captureRecordCaptor.getValue().getProcessStatus()).isEqualTo("PROCESSING");
+        assertThat(captureRecordCaptor.getValue().getMimeType()).isEqualTo("image/png");
+        assertThat(captureRecordCaptor.getValue().getProvider()).isEqualTo("gemini");
+        verify(corpusRecordService, never()).save(any(CorpusRecord.class));
         ArgumentCaptor<CorpusProcessMessage> messageCaptor = ArgumentCaptor.forClass(CorpusProcessMessage.class);
         verify(corpusProcessMessageProducer).send(messageCaptor.capture());
-        assertThat(messageCaptor.getValue().getRecordId()).isEqualTo(100L);
+        assertThat(messageCaptor.getValue().getCaptureRecordId()).isEqualTo(10L);
+        assertThat(messageCaptor.getValue().getRecordId()).isNull();
         assertThat(messageCaptor.getValue().getCaptureId()).isEqualTo(response.getCaptureId());
         assertThat(messageCaptor.getValue().getImageHash()).isEqualTo(imageHash);
         assertThat(messageCaptor.getValue().getOssObjectKey()).isEqualTo("corpus/test.png");
@@ -217,9 +234,9 @@ class CorpusIngestionServiceImplTest {
 
         when(imageHashBloomFilterService.mightContain(imageHash)).thenReturn(false);
         when(ossStorageService.upload(eq(file), any())).thenReturn(new OssUploadResult("bucket", "corpus/test.png", "test.png", "image/png", imageBytes.length));
-        when(corpusRecordService.save(any(CorpusRecord.class))).thenAnswer(invocation -> {
-            CorpusRecord record = invocation.getArgument(0);
-            record.setId(300L);
+        when(captureRecordService.save(any(CaptureRecord.class))).thenAnswer(invocation -> {
+            CaptureRecord record = invocation.getArgument(0);
+            record.setId(30L);
             return true;
         });
 
@@ -227,10 +244,14 @@ class CorpusIngestionServiceImplTest {
 
         assertThat(response.isForce()).isTrue();
         assertThat(response.isAsyncSubmitted()).isTrue();
+        assertThat(response.getCaptureRecordId()).isEqualTo(30L);
+        assertThat(response.getRecordId()).isNull();
         assertThat(response.getParseStatus()).isEqualTo("PROCESSING");
         ArgumentCaptor<CorpusProcessMessage> messageCaptor = ArgumentCaptor.forClass(CorpusProcessMessage.class);
         verify(corpusProcessMessageProducer).send(messageCaptor.capture());
         assertThat(messageCaptor.getValue().isForce()).isTrue();
+        assertThat(messageCaptor.getValue().getRecordId()).isNull();
+        verify(corpusRecordService, never()).save(any(CorpusRecord.class));
         verify(visionRecognitionService, never()).recognize(any(), any());
     }
 }

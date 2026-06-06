@@ -334,4 +334,83 @@ GET /api/v1/corpus/{id}/image-url
 - [x] 新增 Consumer 后台调用 `VisionRecognitionService`，并按识别结果更新 MySQL 与生成 Markdown。
 - [x] 保持 `force=true` 只有重新识别成功后才覆盖旧记录的安全语义。
 
-说明：Milestone 10 已完成 Redis Bloom Filter 与 RabbitMQ 异步削峰主链路。当前默认 `BLOOM_FILTER_ENABLED=false`，因此未配置 Redis 时仍保持原 MySQL 去重行为；开启后通过 `REDIS_HOST`、`REDIS_PORT`、`REDIS_PASSWORD`、`REDIS_DATABASE` 连接 Redis，并初始化 `symptom_graph_hash_bloom`。Bloom Filter 仅作为 MySQL 去重前置过滤器，不作为最终存在性依据；命中时仍穿透查询 MySQL，未命中时才跳过 MySQL。RabbitMQ 阶段已新增 `spring-boot-starter-amqp`、`RabbitMqConfig`、`CorpusProcessMessage`、`CorpusProcessMessageProducer` 和 `CorpusProcessMessageListener`；新图上传只同步完成 OSS 上传、`PROCESSING` 占位记录入库、Bloom Filter 写入和 RabbitMQ 投递，然后立即返回 `recordId` / `captureId` / `parseStatus=PROCESSING`。Consumer 会从私有 OSS 下载原图字节，复用当前 `VisionRecognitionService` 策略路由调用 Gemini/OpenRouter；识别成功时第一条评论复用占位记录，后续评论新增记录，并为 `SUCCESS` 记录生成 Markdown；空结果更新为 `EMPTY_RESULT`；模型或解析异常更新为 `MODEL_FAILED` / `PARSE_FAILED` 并记录错误。重复图 `force=false` 仍返回历史结果；已有图 `force=true` 继续保留同步重识别路径，从而维持“识别成功后才覆盖旧记录”的安全语义。
+说明：Milestone 10 已完成 Redis Bloom Filter 与 RabbitMQ 异步削峰主链路。当前默认 `BLOOM_FILTER_ENABLED=false`，因此未配置 Redis 时仍保持原 MySQL 去重行为；开启后通过 `REDIS_HOST`、`REDIS_PORT`、`REDIS_PASSWORD`、`REDIS_DATABASE` 连接 Redis，并初始化 `symptom_graph_hash_bloom`。Bloom Filter 仅作为 MySQL 去重前置过滤器，不作为最终存在性依据；命中时仍穿透查询 MySQL，未命中时才跳过 MySQL。RabbitMQ 阶段已新增 `spring-boot-starter-amqp`、`RabbitMqConfig`、`CorpusProcessMessage`、`CorpusProcessMessageProducer` 和 `CorpusProcessMessageListener`；新图上传当前只同步完成 OSS 上传、`capture_record PROCESSING` 任务入库、Bloom Filter 写入和 RabbitMQ 投递，然后立即返回 `captureRecordId` / `captureId` / `parseStatus=PROCESSING`。Consumer 会从私有 OSS 下载原图字节，复用当前 `VisionRecognitionService` 策略路由调用 Gemini/OpenRouter；识别成功时写入一条或多条 `corpus_record` 并为 `SUCCESS` 记录生成 Markdown；空结果更新 `capture_record=EMPTY_RESULT`；模型或解析异常更新为 `MODEL_FAILED` / `PARSE_FAILED` 并记录错误。重复图 `force=false` 仍返回历史结果；已有图 `force=true` 继续保留同步重识别路径，从而维持“识别成功后才覆盖旧记录”的安全语义。
+
+## 13. 后续优化 Milestone
+
+以下内容为 Milestone 10 之后的增强路线。实施时仍应遵守“原文优先、不可编造、可追溯、可索引”的核心原则。
+
+### Milestone 11：前端轮询与异步状态展示
+
+- [x] 上传后展示 `PROCESSING` 状态、`captureRecordId` 和 `captureId`。
+- [x] 页面通过 `GET /api/v1/corpus/capture-records/{id}` 轮询任务状态，并在成功后通过 `GET /api/v1/corpus/captures/{captureId}` 拉取识别结果。
+- [x] 识别完成后自动展示评论、tags、错误信息和 Markdown 路径。
+- [x] 区分展示 `PROCESSING`、`SUCCESS`、`EMPTY_RESULT`、`MODEL_FAILED`、`PARSE_FAILED`。
+- [x] 对重复图返回历史结果和异步新图处理给出差异化提示。
+
+说明：Milestone 11 已在 Thymeleaf 上传页中加入轻量前端轮询。异步新图上传后，页面会保留截图 signed URL 预览和 `captureRecordId` / `captureId` / `PROCESSING` 元数据，并每 2 秒请求 `GET /api/v1/corpus/capture-records/{id}` 查询任务状态；任务成功后再请求 `GET /api/v1/corpus/captures/{captureId}` 刷新评论、tags、Markdown 路径和记录数量。轮询最多执行 120 次，达到上限后提示用户手动刷新或通过 capture 查询接口查看结果。
+
+### Milestone 12：真实截图测试集与质量评估
+
+- [ ] 补足 Milestone 8 中至少 20 张中文平台截图测试。
+- [ ] 记录成功样例、失败样例、模型误识别样例和空结果样例。
+- [ ] 对不同平台截图进行覆盖，例如小红书、微博、知乎、贴吧、B 站评论区等。
+- [x] 建立人工验收表：截图编号、平台、预期评论数、实际评论数、parse_status、错误信息、Markdown 路径。
+- [ ] 总结 Prompt 或 Provider 的识别问题。
+
+说明：Milestone 12 已新增 `docs/milestone-12-quality-evaluation.md`，建立真实截图测试集构成、执行步骤、API 辅助命令、质量验收口径、20 张截图记录表、成功样例模板、失败样例模板、模型误识别样例模板和 Prompt/Provider 问题汇总表。当前仓库内未发现可执行的真实截图样本，因此“至少 20 张中文平台截图测试”、成功/失败/误识别样例记录和 Prompt/Provider 问题总结仍待用户提供截图后执行，不能伪造测试结果。
+
+### Milestone 13：RabbitMQ 重试、死信队列与任务恢复
+
+- [x] 为 `corpus.process.queue` 增加重试队列和死信队列。
+- [x] 记录每个任务的最大重试次数、最后失败时间和失败原因。
+- [x] 区分可重试错误和不可重试错误，例如模型限流、网络超时、JSON 格式错误、OSS 下载失败。
+- [x] 提供失败任务重新投递接口，便于人工修复配置后重跑。
+
+说明：Milestone 13 最初在 `corpus_record` 上完成轻量失败治理，新增 retry queue、DLQ 和失败分类。Milestone 14 拆表后，新图异步链路的失败治理已迁移到 `capture_record`：Consumer 通过 `CorpusProcessFailureClassifier` 区分可重试和不可重试异常，`MODEL_FAILED`、OSS 下载失败、Markdown 导出失败和未知运行时异常会在未超过 `CORPUS_PROCESS_MAX_RETRY_ATTEMPTS` 时投递 retry queue，retry queue 通过 TTL 回到主队列；`PARSE_FAILED` 或超过重试上限后写入最终失败状态并投递 DLQ。当前主要重试接口为 `POST /api/v1/corpus/capture-records/{id}/retry`；历史 `POST /api/v1/corpus/{id}/retry` 仍保留用于旧失败语料记录。
+
+### Milestone 14：任务表拆分与采集批次建模
+
+- [x] 新增 `capture_record` 表，专门承载截图采集任务、处理状态、OSS 对象、image_hash、重试次数和错误信息。
+- [x] 将 `corpus_record` 收敛为纯语料表，只保存一条评论一条记录。
+- [x] 将当前 `PROCESSING` 占位记录从 `corpus_record` 迁移到 `capture_record`，避免任务状态与语料内容混用。
+- [x] 新增 `docs/current-chain-summary.md`，带详细注释总结当前上传、去重、OSS、MQ、Consumer、任务状态、轮询、重试/DLQ 和查询接口链路。
+- [ ] 支持一图多评论、一批多图和后续人工校对流程。
+
+说明：Milestone 14.1 / 14.2 已完成增量接入。当前已新增 `capture_record` 表、`CaptureRecord` Entity、Mapper、Service，并在新图上传时写入 `capture_record.process_status=PROCESSING`；`CorpusUploadResponse` 和 `CorpusProcessMessage` 已新增 `captureRecordId`，上传页也展示 `capture_record_id`。Milestone 14.3 已完成 Consumer 侧任务状态同步：处理成功时将 `capture_record.process_status` 更新为 `SUCCESS` 或 `EMPTY_RESULT` 并保存 `model_raw_response` / `error_message`；可重试失败时保持 `PROCESSING` 并更新 `retry_count`、`last_error_type`、`last_failed_at`；最终失败时更新为 `MODEL_FAILED` / `PARSE_FAILED` 并同步错误信息。Milestone 14.4 已移除新图异步上传时的 `corpus_record PROCESSING` 占位记录，新图上传只创建 `capture_record` 任务；Consumer 在成功识别后才写入一条或多条 `corpus_record`，空结果和最终失败只更新 `capture_record`；前端轮询改为先请求 `GET /api/v1/corpus/capture-records/{id}` 获取任务状态，成功后再按 `captureId` 拉取评论语料；新增 `POST /api/v1/corpus/capture-records/{id}/retry` 用于任务表重试。历史 `POST /api/v1/corpus/{id}/retry` 仍保留用于兼容旧失败语料记录。
+
+### Milestone 15：查询、筛选与检索能力增强
+
+- [ ] 增加按 `platform`、`parse_status`、`tag`、`capture_id`、时间范围查询。
+- [ ] 增加分页列表 API 和 Thymeleaf 管理页。
+- [ ] 增加按 `raw_content` / `context_target` 的关键词检索。
+- [ ] 后续可考虑接入 Elasticsearch 或 MySQL Full-Text，用于更大规模语料检索。
+
+建议优先级：中。该扩展能让项目从“采集链路”进一步变成“可检索资料库”。
+
+### Milestone 16：人工校对与版本追踪
+
+- [ ] 增加人工修正 `raw_content`、`context_target`、`tags` 的能力。
+- [ ] 保存模型原始识别结果和人工修订结果，避免覆盖证据链。
+- [ ] 增加校对状态，例如 `UNREVIEWED`、`REVIEWED`、`CORRECTED`。
+- [ ] Markdown 中可选择输出模型识别版本或人工校对版本。
+
+建议优先级：中。该扩展适合在真实资料沉淀场景中提升语料质量。
+
+### Milestone 17：Provider 与模型治理
+
+- [ ] 支持接口级或任务级模型选择，而不仅是全局 `app.vision.provider`。
+- [ ] 记录每次识别使用的 provider、model、耗时和 token/成本估算。
+- [ ] 增加模型失败率、空结果率和平均耗时统计。
+- [ ] 支持同一截图用不同模型重新识别并比较结果。
+
+建议优先级：中。该扩展能让项目更适合展示“多模型 Provider 策略”和模型治理能力。
+
+### Milestone 18：简历与面试展示材料
+
+- [ ] 补充系统架构图，覆盖上传接口、OSS、RabbitMQ、Consumer、Provider、MySQL 和 Markdown 输出。
+- [ ] 补充核心链路时序图，区分新图、重复图、`force=true` 和模型失败路径。
+- [ ] 准备项目讲解稿，突出图片去重、异步削峰、私有 OSS 证据链、多模型策略和失败状态管理。
+- [ ] 准备 3 到 5 个真实截图演示样例，展示从上传到 Obsidian Markdown 输出的完整闭环。
+
+建议优先级：中。该扩展不直接改变业务能力，但能显著提升项目展示效果。

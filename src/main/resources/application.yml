@@ -68,3 +68,11 @@ app:
     corpus-process-queue: ${CORPUS_PROCESS_QUEUE:corpus.process.queue}
     corpus-routing-key: ${CORPUS_PROCESS_ROUTING_KEY:corpus.process}
     listener-auto-startup: ${CORPUS_PROCESS_LISTENER_AUTO_STARTUP:true}
+    retry-exchange: ${CORPUS_PROCESS_RETRY_EXCHANGE:corpus.process.retry.exchange}
+    retry-queue: ${CORPUS_PROCESS_RETRY_QUEUE:corpus.process.retry.queue}
+    retry-routing-key: ${CORPUS_PROCESS_RETRY_ROUTING_KEY:corpus.process.retry}
+    dead-letter-exchange: ${CORPUS_PROCESS_DLX_EXCHANGE:corpus.process.dlx.exchange}
+    dead-letter-queue: ${CORPUS_PROCESS_DLQ:corpus.process.dlq}
+    dead-letter-routing-key: ${CORPUS_PROCESS_DLQ_ROUTING_KEY:corpus.process.dlq}
+    max-retry-attempts: ${CORPUS_PROCESS_MAX_RETRY_ATTEMPTS:3}
+    retry-delay-millis: ${CORPUS_PROCESS_RETRY_DELAY_MILLIS:10000}

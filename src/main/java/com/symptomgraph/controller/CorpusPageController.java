@@ -1,7 +1,9 @@
 package com.symptomgraph.controller;
 
 import com.symptomgraph.dto.CorpusUploadResponse;
+import com.symptomgraph.entity.CaptureRecord;
 import com.symptomgraph.entity.CorpusRecord;
+import com.symptomgraph.service.CaptureRecordService;
 import com.symptomgraph.service.CorpusIngestionService;
 import com.symptomgraph.service.CorpusRecordService;
 import com.symptomgraph.service.OssStorageService;
@@ -19,13 +21,16 @@ import java.util.List;
 public class CorpusPageController {
 
     private final CorpusIngestionService corpusIngestionService;
+    private final CaptureRecordService captureRecordService;
     private final CorpusRecordService corpusRecordService;
     private final OssStorageService ossStorageService;
 
     public CorpusPageController(CorpusIngestionService corpusIngestionService,
+                                CaptureRecordService captureRecordService,
                                 CorpusRecordService corpusRecordService,
                                 OssStorageService ossStorageService) {
         this.corpusIngestionService = corpusIngestionService;
+        this.captureRecordService = captureRecordService;
         this.corpusRecordService = corpusRecordService;
         this.ossStorageService = ossStorageService;
     }
@@ -52,7 +57,14 @@ public class CorpusPageController {
 
         List<CorpusRecord> records = corpusRecordService.listByCaptureId(result.getCaptureId());
         if (records.isEmpty() || !StringUtils.hasText(records.get(0).getOssObjectKey())) {
-            return null;
+            if (result.getCaptureRecordId() == null) {
+                return null;
+            }
+            CaptureRecord captureRecord = captureRecordService.getById(result.getCaptureRecordId());
+            if (captureRecord == null || !StringUtils.hasText(captureRecord.getOssObjectKey())) {
+                return null;
+            }
+            return ossStorageService.generateSignedUrl(captureRecord.getOssObjectKey());
         }
         return ossStorageService.generateSignedUrl(records.get(0).getOssObjectKey());
     }

@@ -1,6 +1,6 @@
 # Milestone 8 测试记录
 
-本文档记录 Milestone 8 的自动化回归、中文平台截图测试计划、当前执行状态和阻塞项。
+本文档记录 Milestone 8 的自动化回归、中文平台截图测试计划、当前执行状态和阻塞项。Milestone 12 已新增更完整的真实截图质量评估文档：`docs/milestone-12-quality-evaluation.md`。
 
 ## 当前状态
 
@@ -8,6 +8,7 @@
 - README：已编写。
 - 20 张中文平台截图测试：待执行。
 - 成功样例和失败样例：待真实截图测试后补充。
+- Milestone 12 质量评估框架：已建立，详见 `docs/milestone-12-quality-evaluation.md`。
 
 ## 自动化回归
 
@@ -63,6 +64,8 @@ BUILD SUCCESS
 | 重复截图 | 1 | 验证 `image_hash` 去重 |
 
 ## 测试记录表
+
+Milestone 12 已提供更完整的测试记录表、质量验收口径、成功/失败/误识别样例模板和 Prompt/Provider 问题汇总表。后续真实截图测试统一优先填写 `docs/milestone-12-quality-evaluation.md`。
 
 | 编号 | 截图文件 | 平台 | force | 结果 | 评论数 | context_target 是否可见原文 | raw_content 是否忠实原文 | tags 是否合规 | Markdown 路径 | 备注 |
 | --- | --- | --- | --- | --- | ---: | --- | --- | --- | --- | --- |

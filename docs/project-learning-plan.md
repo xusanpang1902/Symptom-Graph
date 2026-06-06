@@ -498,12 +498,12 @@ Symptom-Graph：基于 Spring Boot 的中文互联网截图语料采集与索引
 1. 先讲业务问题：截图资料难整理，需要可追溯语料库。
 2. 再讲主链路：上传、hash、OSS、模型、MySQL、Markdown、页面展示。
 3. 然后讲核心设计：去重、`force=true`、Provider 抽象、证据链。
-4. 最后讲工程取舍：MVP 单表、私有 OSS、signed URL、Markdown 不存 URL、模型失败状态。
+4. 最后讲工程取舍：任务表和语料表拆分、私有 OSS、signed URL、Markdown 不存 URL、模型失败状态。
 
 1 分钟版本：
 
 ```text
-这个项目是一个中文互联网截图语料采集系统。我用 Spring Boot 实现截图上传后端，先计算 SHA-256 做图片去重，非重复图片上传到阿里云 OSS 私有 Bucket，再调用 Gemini 或 OpenRouter 多模态模型提取截图中的可见评论。识别结果会按一张截图多条评论写入 MySQL，同时为每条评论生成 Obsidian Markdown。系统保留 image_hash、oss_object_key、model_raw_response 等证据链字段，并通过 signed URL 在页面临时预览原图。架构上我抽象了 VisionRecognitionProvider，让核心采集链路不绑定某个模型厂商。
+这个项目是一个中文互联网截图语料采集系统。我用 Spring Boot 实现截图上传后端，先计算 SHA-256 做图片去重，非重复图片上传到阿里云 OSS 私有 Bucket，再写入 capture_record 任务并投递 RabbitMQ。后台 Consumer 调用 Gemini 或 OpenRouter 多模态模型提取截图中的可见评论，成功后按一张截图多条评论写入 corpus_record，同时为每条评论生成 Obsidian Markdown。系统保留 image_hash、oss_object_key、model_raw_response 等证据链字段，并通过 signed URL 在页面临时预览原图。架构上我抽象了 VisionRecognitionProvider，让核心采集链路不绑定某个模型厂商。
 ```
 
 ## 18. 高频面试问题清单
@@ -518,8 +518,8 @@ Symptom-Graph：基于 Spring Boot 的中文互联网截图语料采集与索引
 - 为什么 Markdown 不保存 signed URL？
 - 为什么要同时写 MySQL 和 Markdown？
 - 一张截图多条评论如何建模？
-- 为什么 MVP 使用单表？
-- 后续如何拆分 `capture_record` 和 `corpus_record`？
+- 为什么要拆分 `capture_record` 和 `corpus_record`？
+- 拆表后如何避免任务状态污染语料表？
 - 为什么抽象 `VisionRecognitionProvider`？
 - 如何新增一个模型 Provider？
 - 如何控制模型不要编造？

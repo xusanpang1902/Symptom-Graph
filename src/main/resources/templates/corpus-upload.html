@@ -191,6 +191,13 @@
             color: var(--warn);
         }
 
+        .polling-status {
+            margin-top: 12px;
+            color: var(--muted);
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
         .records {
             grid-column: 1 / -1;
         }
@@ -321,7 +328,11 @@
         </aside>
     </section>
 
-    <section class="result" th:if="${result != null}">
+    <section class="result"
+             th:if="${result != null}"
+             th:data-capture-id="${result.captureId}"
+             th:data-capture-record-id="${result.captureRecordId}"
+             th:data-async-submitted="${result.asyncSubmitted}">
         <div class="card preview">
             <h2>截图预览</h2>
             <p th:if="${signedUrl == null}">没有可用的 signed URL。可能是模型调用失败前没有保存 OSS 对象，或历史记录缺少 object key。</p>
@@ -331,9 +342,12 @@
         <div class="card metadata">
             <h2>采集结果</h2>
             <div class="notice" th:if="${result.duplicate}">该截图已存在，已返回历史识别结果。</div>
-            <div class="notice" th:if="${result.asyncSubmitted}">识别任务已提交到 RabbitMQ，当前记录处于 PROCESSING，请稍后通过 capture_id 或 record id 查询结果。</div>
+            <div class="notice" th:if="${result.asyncSubmitted}">识别任务已提交到 RabbitMQ，页面会自动轮询刷新最终识别结果。</div>
             <div class="notice force" th:if="${result.force and !result.asyncSubmitted}">已强制重新识别，并覆盖原 Markdown 输出。</div>
+            <div id="pollingStatus" class="polling-status" th:if="${result.asyncSubmitted}">正在等待后台 Consumer 处理...</div>
             <dl>
+                <dt>capture_record_id</dt>
+                <dd th:text="${result.captureRecordId}"></dd>
                 <dt>record_id</dt>
                 <dd th:text="${result.recordId}"></dd>
                 <dt>capture_id</dt>
@@ -341,7 +355,7 @@
                 <dt>image_hash</dt>
                 <dd th:text="${result.imageHash}"></dd>
                 <dt>parse_status</dt>
-                <dd th:text="${result.parseStatus}"></dd>
+                <dd id="parseStatusValue" th:text="${result.parseStatus}"></dd>
                 <dt>async_submitted</dt>
                 <dd th:text="${result.asyncSubmitted}"></dd>
                 <dt>duplicate</dt>
@@ -349,13 +363,13 @@
                 <dt>force</dt>
                 <dd th:text="${result.force}"></dd>
                 <dt>records</dt>
-                <dd th:text="${#lists.size(result.records)}"></dd>
+                <dd id="recordCountValue" th:text="${#lists.size(result.records)}"></dd>
             </dl>
         </div>
 
         <div class="card records">
             <h2>评论与 Markdown 输出</h2>
-            <div class="record-grid">
+            <div id="recordGrid" class="record-grid">
                 <article class="record" th:each="record : ${result.records}">
                     <div class="record-head">
                         <h3 th:text="${record.platform ?: '未知平台'} + ' 评论 ' + ${record.commentIndex}">评论</h3>
@@ -381,5 +395,115 @@
         </div>
     </section>
 </main>
+<script>
+    (() => {
+        const resultSection = document.querySelector('.result[data-capture-id]');
+        if (!resultSection || resultSection.dataset.asyncSubmitted !== 'true') {
+            return;
+        }
+
+        const captureId = resultSection.dataset.captureId;
+        const captureRecordId = resultSection.dataset.captureRecordId;
+        const statusEl = document.getElementById('pollingStatus');
+        const parseStatusEl = document.getElementById('parseStatusValue');
+        const recordCountEl = document.getElementById('recordCountValue');
+        const recordGridEl = document.getElementById('recordGrid');
+        const maxAttempts = 120;
+        let attempts = 0;
+
+        const escapeHtml = (value) => String(value ?? '')
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;')
+            .replaceAll("'", '&#39;');
+
+        const statusClass = (status) => {
+            if (status === 'SUCCESS') {
+                return 'success';
+            }
+            if (status === 'PROCESSING') {
+                return 'processing';
+            }
+            return 'error';
+        };
+
+        const isProcessingStatus = (status) => status === 'PROCESSING';
+        const isFinalFailureStatus = (status) => status === 'MODEL_FAILED' || status === 'PARSE_FAILED';
+
+        const renderRecords = (records) => {
+            if (!Array.isArray(records) || records.length === 0) {
+                recordGridEl.innerHTML = '<div class="polling-status">当前没有可展示的评论语料。</div>';
+                return;
+            }
+            recordGridEl.innerHTML = records.map((record) => {
+                const platform = record.platform || '未知平台';
+                const tags = Array.isArray(record.tags) ? record.tags : [];
+                return `
+                    <article class="record">
+                        <div class="record-head">
+                            <h3>${escapeHtml(platform)} 评论 ${escapeHtml(record.commentIndex)}</h3>
+                            <span class="badge ${statusClass(record.parseStatus)}">${escapeHtml(record.parseStatus)}</span>
+                        </div>
+                        ${record.rawContent ? `<div class="quote">${escapeHtml(record.rawContent)}</div>` : ''}
+                        ${record.contextTarget ? `<div class="quote">${escapeHtml(record.contextTarget)}</div>` : ''}
+                        ${tags.length > 0 ? `<div class="tags">${tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
+                        ${record.markdownPath ? `<div class="path">Markdown: <span>${escapeHtml(record.markdownPath)}</span></div>` : ''}
+                        ${record.errorMessage ? `<div class="error-text">${escapeHtml(record.errorMessage)}</div>` : ''}
+                    </article>
+                `;
+            }).join('');
+        };
+
+        const poll = async () => {
+            attempts += 1;
+            try {
+                const taskResponse = await fetch(`/api/v1/corpus/capture-records/${encodeURIComponent(captureRecordId)}`);
+                if (!taskResponse.ok) {
+                    throw new Error(`HTTP ${taskResponse.status}`);
+                }
+                const task = await taskResponse.json();
+                const processStatus = task.processStatus || '';
+                parseStatusEl.textContent = processStatus;
+
+                if (isProcessingStatus(processStatus)) {
+                    statusEl.textContent = `后台仍在处理，已轮询 ${attempts} 次...`;
+                    scheduleNext();
+                    return;
+                }
+
+                if (processStatus === 'EMPTY_RESULT' || isFinalFailureStatus(processStatus)) {
+                    renderRecords([]);
+                    recordCountEl.textContent = '0';
+                    statusEl.textContent = task.errorMessage || '后台处理已完成，但没有生成评论语料。';
+                    return;
+                }
+
+                const recordsResponse = await fetch(`/api/v1/corpus/captures/${encodeURIComponent(captureId)}`);
+                if (!recordsResponse.ok) {
+                    throw new Error(`HTTP ${recordsResponse.status}`);
+                }
+                const records = await recordsResponse.json();
+
+                renderRecords(records);
+                recordCountEl.textContent = records.length;
+                statusEl.textContent = '后台识别已完成，页面已刷新最终结果。';
+            } catch (error) {
+                statusEl.textContent = `轮询识别结果失败：${error.message}。稍后将自动重试。`;
+                scheduleNext();
+            }
+        };
+
+        const scheduleNext = () => {
+            if (attempts >= maxAttempts) {
+                statusEl.textContent = '轮询已达到上限，请稍后手动刷新页面或通过 capture_id 查询结果。';
+                return;
+            }
+            window.setTimeout(poll, 2000);
+        };
+
+        scheduleNext();
+    })();
+</script>
 </body>
 </html>

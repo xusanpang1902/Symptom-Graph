@@ -7,39 +7,27 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 @Data
-@TableName("corpus_record")
-public class CorpusRecord {
+@TableName("capture_record")
+public class CaptureRecord {
 
     @TableId
     private Long id;
 
     private String captureId;
 
-    private Integer commentIndex;
-
-    private String rawContent;
-
-    private String contextTarget;
-
-    private String platform;
-
-    private LocalDateTime originalPublishTime;
-
-    private LocalDateTime collectedTime;
+    private String imageHash;
 
     private String ossBucket;
 
     private String ossObjectKey;
 
-    private String imageHash;
+    private String mimeType;
 
-    private String tags;
+    private String provider;
 
-    private String modelRawResponse;
+    private String model;
 
-    private String parseStatus;
-
-    private String errorMessage;
+    private String processStatus;
 
     private Integer retryCount;
 
@@ -47,7 +35,13 @@ public class CorpusRecord {
 
     private LocalDateTime lastFailedAt;
 
-    private String markdownPath;
+    private String errorMessage;
+
+    private String modelRawResponse;
+
+    private Boolean duplicate;
+
+    private Boolean force;
 
     private LocalDateTime createdAt;
 

@@ -2,7 +2,9 @@ package com.symptomgraph.controller;
 
 import com.symptomgraph.dto.CorpusRecordResponse;
 import com.symptomgraph.dto.CorpusUploadResponse;
+import com.symptomgraph.entity.CaptureRecord;
 import com.symptomgraph.entity.CorpusRecord;
+import com.symptomgraph.service.CaptureRecordService;
 import com.symptomgraph.service.CorpusIngestionService;
 import com.symptomgraph.service.CorpusRecordService;
 import com.symptomgraph.service.OssStorageService;
@@ -35,6 +37,9 @@ class CorpusPageControllerTest {
 
     @MockBean
     private CorpusIngestionService corpusIngestionService;
+
+    @MockBean
+    private CaptureRecordService captureRecordService;
 
     @MockBean
     private CorpusRecordService corpusRecordService;
@@ -89,6 +94,35 @@ class CorpusPageControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(view().name("corpus-upload"))
                 .andExpect(content().string(containsString("该截图已存在，已返回历史识别结果")));
+    }
+
+    @Test
+    void uploadShowsAsyncPollingElementsWhenProcessingSubmitted() throws Exception {
+        MockMultipartFile file = new MockMultipartFile("file", "test.png", "image/png", "image".getBytes());
+        CorpusUploadResponse response = buildResponse(false, false);
+        response.setCaptureRecordId(100L);
+        response.setParseStatus("PROCESSING");
+        response.setAsyncSubmitted(true);
+        response.setRecords(List.of());
+        CaptureRecord captureRecord = new CaptureRecord();
+        captureRecord.setId(100L);
+        captureRecord.setOssObjectKey("corpus/test.png");
+
+        when(corpusIngestionService.ingest(any(), eq(false))).thenReturn(response);
+        when(corpusRecordService.listByCaptureId("capture_1")).thenReturn(List.of());
+        when(captureRecordService.getById(100L)).thenReturn(captureRecord);
+        when(ossStorageService.generateSignedUrl("corpus/test.png")).thenReturn("https://signed.example/test.png");
+
+        mockMvc.perform(multipart("/corpus/upload").file(file))
+                .andExpect(status().isOk())
+                .andExpect(view().name("corpus-upload"))
+                .andExpect(content().string(containsString("页面会自动轮询刷新最终识别结果")))
+                .andExpect(content().string(containsString("data-capture-id=\"capture_1\"")))
+                .andExpect(content().string(containsString("data-capture-record-id=\"100\"")))
+                .andExpect(content().string(containsString("data-async-submitted=\"true\"")))
+                .andExpect(content().string(containsString("/api/v1/corpus/capture-records/")))
+                .andExpect(content().string(containsString("/api/v1/corpus/captures/")))
+                .andExpect(content().string(containsString("正在等待后台 Consumer 处理")));
     }
 
     private CorpusUploadResponse buildResponse(boolean duplicate, boolean force) {

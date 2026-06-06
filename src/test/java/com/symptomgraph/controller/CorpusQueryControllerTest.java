@@ -1,6 +1,8 @@
 package com.symptomgraph.controller;
 
+import com.symptomgraph.entity.CaptureRecord;
 import com.symptomgraph.entity.CorpusRecord;
+import com.symptomgraph.service.CaptureRecordService;
 import com.symptomgraph.service.CorpusRecordService;
 import com.symptomgraph.service.OssStorageService;
 import org.junit.jupiter.api.Test;
@@ -21,6 +23,9 @@ class CorpusQueryControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @MockBean
+    private CaptureRecordService captureRecordService;
 
     @MockBean
     private CorpusRecordService corpusRecordService;
@@ -56,6 +61,24 @@ class CorpusQueryControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].commentIndex").value(1))
                 .andExpect(jsonPath("$[1].commentIndex").value(2));
+    }
+
+    @Test
+    void captureRecordReturnsTaskStatus() throws Exception {
+        CaptureRecord record = new CaptureRecord();
+        record.setId(10L);
+        record.setCaptureId("capture_1");
+        record.setImageHash("hash_1");
+        record.setProcessStatus("PROCESSING");
+        record.setRetryCount(1);
+        when(captureRecordService.getById(10L)).thenReturn(record);
+
+        mockMvc.perform(get("/api/v1/corpus/capture-records/10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(10))
+                .andExpect(jsonPath("$.captureId").value("capture_1"))
+                .andExpect(jsonPath("$.processStatus").value("PROCESSING"))
+                .andExpect(jsonPath("$.retryCount").value(1));
     }
 
     @Test

@@ -12,6 +12,8 @@ public class CorpusUploadResponse {
 
     private String imageHash;
 
+    private Long captureRecordId;
+
     private Long recordId;
 
     private String parseStatus;

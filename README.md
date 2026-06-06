@@ -25,17 +25,19 @@ MVP 目标是完成一条稳定、可展示、可扩展的采集链路。
 -> 计算 SHA-256 image_hash
 -> Bloom Filter + MySQL 查询去重
 -> 非重复时上传 OSS 私有 Bucket
--> 插入 PROCESSING 占位记录
+-> 插入 capture_record PROCESSING 任务记录
 -> 投递 RabbitMQ corpus.process.queue
--> 上传接口立即返回 recordId / captureId
+-> 上传接口立即返回 captureRecordId / captureId
 -> Consumer 后台下载 OSS 原图并调用多模态 Provider
--> 更新 MySQL 多条语料记录
+-> 识别成功后写入 MySQL 多条语料记录
 -> 为 SUCCESS 记录生成 Markdown
 ```
 
-新图上传会立即返回 `PROCESSING` 状态。后台 Consumer 会从私有 OSS 下载原图，调用当前配置的多模态 Provider，识别成功后更新 MySQL 并生成 Markdown。前端或调用方可通过 `recordId` 或 `captureId` 查询最终结果。
+新图上传会立即返回 `PROCESSING` 状态。后台 Consumer 会从私有 OSS 下载原图，调用当前配置的多模态 Provider，识别成功后写入 MySQL 语料记录并生成 Markdown。前端或调用方可通过 `captureRecordId` 追踪任务状态，通过 `captureId` 查询最终评论语料。
 
 重复图片默认跳过 OSS 上传和模型调用，直接返回历史识别结果。对已有图片传入 `force=true` 时，现阶段仍保留同步重识别逻辑：复用已有 OSS 对象，重新调用配置的多模态 Provider；只有重新识别成功后才替换旧识别记录并按稳定文件名覆盖 Markdown，避免模型失败破坏历史语料。
+
+当前完整链路和详细注释说明见 `docs/current-chain-summary.md`。
 
 ## 运行依赖
 
@@ -51,7 +53,31 @@ Redis Bloom Filter 默认关闭，未配置 Redis 时系统仍使用 MySQL 索�
 
 ## 数据表设计
 
-MVP 使用单表 `corpus_record` 表达一图多评论。
+当前已演进为 `capture_record` + `corpus_record` 双表模型。`capture_record` 用于承载截图采集任务状态，`corpus_record` 用于承载识别出的评论语料。新图上传不再创建 `corpus_record PROCESSING` 占位记录；Consumer 成功识别后才写入一条或多条 `corpus_record`，空结果和最终失败只更新 `capture_record`。
+
+### capture_record
+
+| 字段 | 说明 |
+| --- | --- |
+| `id` | 主键 |
+| `capture_id` | 一次截图采集 ID |
+| `image_hash` | 图片 SHA-256 |
+| `oss_bucket` | OSS Bucket 名称 |
+| `oss_object_key` | OSS Object Key |
+| `mime_type` | 上传图片 MIME 类型 |
+| `provider` | 多模态 Provider |
+| `model` | 多模态模型名称 |
+| `process_status` | `PROCESSING`、`SUCCESS`、`MODEL_FAILED`、`PARSE_FAILED`、`EMPTY_RESULT` 等 |
+| `retry_count` | 后台处理重试次数 |
+| `last_error_type` | 最后一次错误类型 |
+| `last_failed_at` | 最后一次失败时间 |
+| `error_message` | 错误信息 |
+| `model_raw_response` | 多模态 Provider 原始返回 |
+| `duplicate` | 是否重复截图任务 |
+| `force` | 是否强制重新识别 |
+| `created_at` / `updated_at` | 创建和更新时间 |
+
+### corpus_record
 
 | 字段 | 说明 |
 | --- | --- |
@@ -70,6 +96,9 @@ MVP 使用单表 `corpus_record` 表达一图多评论。
 | `model_raw_response` | 多模态 Provider 原始返回 |
 | `parse_status` | `PROCESSING`、`SUCCESS`、`MODEL_FAILED`、`PARSE_FAILED`、`EMPTY_RESULT` 等 |
 | `error_message` | 错误信息 |
+| `retry_count` | 后台处理重试次数 |
+| `last_error_type` | 最后一次错误类型 |
+| `last_failed_at` | 最后一次失败时间 |
 | `markdown_path` | Markdown 文件路径 |
 | `created_at` / `updated_at` | 创建和更新时间 |
 
@@ -138,7 +167,7 @@ Markdown 文件不会保存 signed URL，避免链接过期后污染长期研究
 
 - `force=false` 且 `image_hash` 已存在：直接返回历史记录，不上传 OSS，不调用模型。
 - `force=true` 且 `image_hash` 已存在：复用已有 OSS 对象，重新识别，覆盖同名 Markdown。
-- `image_hash` 不存在：上传 OSS，写入 `PROCESSING` 占位记录，投递 RabbitMQ 后立即返回。
+- `image_hash` 不存在：上传 OSS，写入 `capture_record PROCESSING` 任务记录，投递 RabbitMQ 后立即返回。
 
 可选开启 Redis Bloom Filter 作为 MySQL 查重前置过滤器。Bloom Filter 判定“不存在”时跳过 MySQL；判定“可能存在”时仍穿透 MySQL 做最终确认。
 
@@ -146,15 +175,33 @@ Markdown 文件不会保存 signed URL，避免链接过期后污染长期研究
 
 新图上传采用 RabbitMQ 异步处理：
 
-| 阶段 | `parse_status` | 说明 |
+| 阶段 | `capture_record.process_status` | 说明 |
 | --- | --- | --- |
-| 上传成功并投递 MQ | `PROCESSING` | 已保存 OSS 原图和占位记录，等待 Consumer 识别 |
-| 识别成功 | `SUCCESS` | 第一条评论复用占位记录，后续评论追加记录，并生成 Markdown |
-| 识别为空 | `EMPTY_RESULT` | 模型返回空 `items`，不生成 Markdown |
+| 上传成功并投递 MQ | `PROCESSING` | 已保存 OSS 原图和任务记录，等待 Consumer 识别 |
+| 识别成功 | `SUCCESS` | 写入一条或多条 `corpus_record`，并生成 Markdown |
+| 识别为空 | `EMPTY_RESULT` | 模型返回空 `items`，不写入空语料，不生成 Markdown |
 | 模型调用失败 | `MODEL_FAILED` | 记录模型异常和错误信息 |
 | 解析或其他异常 | `PARSE_FAILED` | 记录解析失败或后台处理异常 |
 
 后台 Consumer 通过 `VisionRecognitionService` 调用当前配置的 Provider，因此异步化不会破坏 Gemini / OpenRouter 策略模式。
+
+## RabbitMQ 重试与死信
+
+后台识别失败后会按错误类型进行治理：
+
+- 可重试错误：例如 `MODEL_FAILED`、OSS 下载失败、Markdown 导出失败和未知运行时异常。
+- 不可重试错误：例如 `PARSE_FAILED`。
+- 未超过最大重试次数时，消息进入 `corpus.process.retry.queue`，等待 TTL 后回到主队列。
+- 超过最大重试次数或不可重试时，记录最终失败状态，并投递到 `corpus.process.dlq` 便于排查。
+- 可通过 `POST /api/v1/corpus/capture-records/{id}/retry` 将失败任务重置为 `PROCESSING` 并重新投递主队列。
+- 历史失败语料记录仍可通过 `POST /api/v1/corpus/{id}/retry` 兼容重试。
+
+默认重试配置：
+
+```text
+CORPUS_PROCESS_MAX_RETRY_ATTEMPTS=3
+CORPUS_PROCESS_RETRY_DELAY_MILLIS=10000
+```
 
 ## Obsidian Markdown 输出
 
@@ -252,6 +299,14 @@ CORPUS_PROCESS_EXCHANGE=corpus.process.exchange
 CORPUS_PROCESS_QUEUE=corpus.process.queue
 CORPUS_PROCESS_ROUTING_KEY=corpus.process
 CORPUS_PROCESS_LISTENER_AUTO_STARTUP=true
+CORPUS_PROCESS_RETRY_EXCHANGE=corpus.process.retry.exchange
+CORPUS_PROCESS_RETRY_QUEUE=corpus.process.retry.queue
+CORPUS_PROCESS_RETRY_ROUTING_KEY=corpus.process.retry
+CORPUS_PROCESS_DLX_EXCHANGE=corpus.process.dlx.exchange
+CORPUS_PROCESS_DLQ=corpus.process.dlq
+CORPUS_PROCESS_DLQ_ROUTING_KEY=corpus.process.dlq
+CORPUS_PROCESS_MAX_RETRY_ATTEMPTS=3
+CORPUS_PROCESS_RETRY_DELAY_MILLIS=10000
 BLOOM_FILTER_ENABLED=false
 REDIS_HOST=localhost
 REDIS_PORT=6379
@@ -288,6 +343,47 @@ if ($env:OPENROUTER_API_KEY) { "OPENROUTER_API_KEY is set" } else { "OPENROUTER_
 如果通过系统环境变量界面新增变量，需要重启终端或 IDE 后再启动应用。`OPENROUTER_API_KEY` 只填写 key 本身，不需要包含 `Bearer ` 前缀。
 
 ### 3. 启动应用
+
+如果你已有旧版本数据库，需要补充 Milestone 13 新增字段：
+
+```sql
+ALTER TABLE corpus_record
+    ADD COLUMN retry_count INT NOT NULL DEFAULT 0 COMMENT '后台处理重试次数' AFTER error_message,
+    ADD COLUMN last_error_type VARCHAR(64) NULL COMMENT '最后一次错误类型' AFTER retry_count,
+    ADD COLUMN last_failed_at DATETIME NULL COMMENT '最后一次失败时间' AFTER last_error_type;
+```
+
+全新数据库可直接执行 `src/main/resources/db/schema.sql`。
+
+如果你已有旧版本数据库，还需要补充 Milestone 14 新增的 `capture_record` 表：
+
+```sql
+CREATE TABLE IF NOT EXISTS capture_record (
+    id BIGINT NOT NULL COMMENT '主键',
+    capture_id VARCHAR(64) NOT NULL COMMENT '一次截图采集 ID',
+    image_hash VARCHAR(64) NOT NULL COMMENT '图片 SHA-256',
+    oss_bucket VARCHAR(128) NOT NULL COMMENT 'OSS Bucket 名称',
+    oss_object_key VARCHAR(512) NOT NULL COMMENT 'OSS Object Key',
+    mime_type VARCHAR(128) NULL COMMENT '上传图片 MIME 类型',
+    provider VARCHAR(64) NULL COMMENT '多模态 Provider',
+    model VARCHAR(128) NULL COMMENT '多模态模型名称',
+    process_status VARCHAR(32) NOT NULL COMMENT '采集任务处理状态',
+    retry_count INT NOT NULL DEFAULT 0 COMMENT '后台处理重试次数',
+    last_error_type VARCHAR(64) NULL COMMENT '最后一次错误类型',
+    last_failed_at DATETIME NULL COMMENT '最后一次失败时间',
+    error_message TEXT NULL COMMENT '错误信息',
+    model_raw_response JSON NULL COMMENT '多模态 Provider 原始返回',
+    duplicate TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否重复截图任务',
+    force TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否强制重新识别',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_capture_id (capture_id),
+    KEY idx_capture_image_hash (image_hash),
+    KEY idx_capture_process_status (process_status),
+    KEY idx_capture_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='截图采集任务记录';
+```
 
 ```bash
 mvn spring-boot:run
@@ -343,11 +439,12 @@ Content-Type: multipart/form-data
 | `file` | File | 是 | 截图文件 |
 | `force` | Boolean | 否 | 是否强制重新识别，默认 `false` |
 
-非重复新图上传成功后，当前接口会立即返回 `PROCESSING` 记录，核心字段包括：
+非重复新图上传成功后，当前接口会立即返回 `PROCESSING` 任务，核心字段包括：
 
 | 字段 | 说明 |
 | --- | --- |
-| `recordId` | 初始 `PROCESSING` 占位记录 ID |
+| `captureRecordId` | 初始 `capture_record` 任务 ID，Consumer 会同步更新该任务状态 |
+| `recordId` | 新图异步链路中为 `null`；仅历史兼容链路可能返回 |
 | `captureId` | 本次截图采集 ID |
 | `imageHash` | 图片 SHA-256 |
 | `parseStatus` | 当前为 `PROCESSING` |
@@ -359,29 +456,21 @@ Content-Type: multipart/form-data
 {
   "captureId": "20260605150000_abcd1234",
   "imageHash": "...",
-  "recordId": 123,
+  "captureRecordId": 1001,
+  "recordId": null,
   "parseStatus": "PROCESSING",
   "duplicate": false,
   "force": false,
   "asyncSubmitted": true,
-  "records": [
-    {
-      "id": 123,
-      "captureId": "20260605150000_abcd1234",
-      "commentIndex": 1,
-      "imageHash": "...",
-      "tags": [],
-      "parseStatus": "PROCESSING"
-    }
-  ]
+  "records": []
 }
 ```
 
 后台处理完成后：
 
-- 识别成功：占位记录更新为第一条评论，后续评论新增为同一 `captureId` 下的记录，`parseStatus=SUCCESS`，并生成 Markdown。
-- 识别为空：占位记录更新为 `EMPTY_RESULT`，不生成 Markdown。
-- 模型或解析失败：占位记录更新为 `MODEL_FAILED` 或 `PARSE_FAILED`，写入 `errorMessage`。
+- 识别成功：`capture_record.process_status=SUCCESS`，同一 `captureId` 下新增一条或多条 `corpus_record`，并生成 Markdown。
+- 识别为空：`capture_record.process_status=EMPTY_RESULT`，不写入空语料，不生成 Markdown。
+- 模型或解析失败：`capture_record.process_status=MODEL_FAILED` 或 `PARSE_FAILED`，写入 `errorMessage`。
 
 `curl` 示例：
 
@@ -403,6 +492,12 @@ GET /api/v1/corpus/{id}
 GET /api/v1/corpus/captures/{captureId}
 ```
 
+### 查询截图采集任务
+
+```http
+GET /api/v1/corpus/capture-records/{id}
+```
+
 ### 获取图片临时访问链接
 
 ```http
@@ -417,6 +512,22 @@ GET /api/v1/corpus/{id}/image-url
 }
 ```
 
+### 失败任务重新投递
+
+```http
+POST /api/v1/corpus/capture-records/{id}/retry
+```
+
+仅允许 `MODEL_FAILED` 或 `PARSE_FAILED` 任务重试。接口会将 `capture_record` 重置为 `PROCESSING`，清空错误信息和重试字段，并重新投递 RabbitMQ 主队列。
+
+历史兼容接口：
+
+```http
+POST /api/v1/corpus/{id}/retry
+```
+
+仅允许 `MODEL_FAILED` 或 `PARSE_FAILED` 语料记录重试。
+
 ## 测试
 
 运行自动化测试：
@@ -429,8 +540,9 @@ mvn test
 
 - 核心采集编排链路。
 - Redis Bloom Filter 前置查重和 MySQL 回退路径。
-- RabbitMQ 新图投递、`PROCESSING` 占位记录和异步响应。
+- RabbitMQ 新图投递、`capture_record PROCESSING` 任务记录和异步响应。
 - RabbitMQ Consumer 成功识别、空结果和模型失败状态流转。
+- RabbitMQ retry queue、DLQ、失败分类和手动重投递 API。
 - 图片 hash 去重和已有图 `force=true` 重新识别。
 - Gemini / OpenRouter 返回解析和异常处理。
 - `force=true` 重新识别失败时保留历史记录。
@@ -441,3 +553,16 @@ mvn test
 - Thymeleaf 上传页和 signed URL 展示。
 
 Milestone 8 的中文平台截图测试记录见 `docs/milestone-8-test-report.md`。
+
+## 后续路线
+
+当前 MVP 已完成截图上传、去重、私有 OSS、RabbitMQ 异步识别、任务表拆分、多模型 Provider、MySQL 入库和 Obsidian Markdown 输出。当前链路总结和详细注释见 `docs/current-chain-summary.md`，后续计划详见 `SYMPTOM_GRAPH_PLAN.md` 的“后续扩展路线”，重点方向包括：
+
+- 增强按平台、状态、标签、时间范围和关键词的查询检索。
+- 补足至少 20 张真实中文平台截图测试集。
+- 增加人工校对、版本追踪和 Provider 识别质量统计。
+- 补充架构图、时序图和项目讲解材料。
+
+前端异步轮询已完成：新图上传返回 `PROCESSING` 后，页面会自动请求 `GET /api/v1/corpus/capture-records/{id}` 查询任务状态；任务成功后再请求 `GET /api/v1/corpus/captures/{captureId}` 并刷新最终识别结果。
+
+Milestone 12 已建立真实截图质量评估框架，详见 `docs/milestone-12-quality-evaluation.md`。实际 20 张截图测试仍需要提供真实中文平台截图后执行。

@@ -3,15 +3,20 @@ package com.symptomgraph.service.impl;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.symptomgraph.config.GeminiProperties;
+import com.symptomgraph.config.OpenRouterProperties;
+import com.symptomgraph.config.VisionProperties;
 import com.symptomgraph.dto.CorpusProcessMessage;
 import com.symptomgraph.dto.CorpusRecordResponse;
 import com.symptomgraph.dto.CorpusUploadResponse;
 import com.symptomgraph.dto.OssUploadResult;
 import com.symptomgraph.dto.VisionRecognitionItem;
 import com.symptomgraph.dto.VisionRecognitionResult;
+import com.symptomgraph.entity.CaptureRecord;
 import com.symptomgraph.entity.CorpusRecord;
 import com.symptomgraph.exception.VisionRecognitionException;
 import com.symptomgraph.mq.CorpusProcessMessageProducer;
+import com.symptomgraph.service.CaptureRecordService;
 import com.symptomgraph.service.CorpusIngestionService;
 import com.symptomgraph.service.CorpusRecordService;
 import com.symptomgraph.service.ImageHashBloomFilterService;
@@ -42,28 +47,40 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
     private static final DateTimeFormatter CAPTURE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
     private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
+    private final CaptureRecordService captureRecordService;
     private final CorpusRecordService corpusRecordService;
     private final ImageHashBloomFilterService imageHashBloomFilterService;
     private final OssStorageService ossStorageService;
     private final VisionRecognitionService visionRecognitionService;
     private final MarkdownExportService markdownExportService;
     private final CorpusProcessMessageProducer corpusProcessMessageProducer;
+    private final VisionProperties visionProperties;
+    private final GeminiProperties geminiProperties;
+    private final OpenRouterProperties openRouterProperties;
     private final ObjectMapper objectMapper;
 
     // 构造器
-    public CorpusIngestionServiceImpl(CorpusRecordService corpusRecordService,
+    public CorpusIngestionServiceImpl(CaptureRecordService captureRecordService,
+                                      CorpusRecordService corpusRecordService,
                                       ImageHashBloomFilterService imageHashBloomFilterService,
                                       OssStorageService ossStorageService,
                                       VisionRecognitionService visionRecognitionService,
                                       MarkdownExportService markdownExportService,
                                       CorpusProcessMessageProducer corpusProcessMessageProducer,
+                                      VisionProperties visionProperties,
+                                      GeminiProperties geminiProperties,
+                                      OpenRouterProperties openRouterProperties,
                                       ObjectMapper objectMapper) {
+        this.captureRecordService = captureRecordService;
         this.corpusRecordService = corpusRecordService;
         this.imageHashBloomFilterService = imageHashBloomFilterService;
         this.ossStorageService = ossStorageService;
         this.visionRecognitionService = visionRecognitionService;
         this.markdownExportService = markdownExportService;
         this.corpusProcessMessageProducer = corpusProcessMessageProducer;
+        this.visionProperties = visionProperties;
+        this.geminiProperties = geminiProperties;
+        this.openRouterProperties = openRouterProperties;
         this.objectMapper = objectMapper;
     }
 
@@ -117,23 +134,16 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
         // 大模型识别属于高延迟外部网络调用，会在后续 RabbitMQ Consumer 中异步执行，从而降低上传接口 RT。
         OssUploadResult uploadResult = ossStorageService.upload(file, captureId);
 
-        CorpusRecord processingRecord = buildProcessingRecord(
-                captureId,
-                imageHash,
-                uploadResult.getBucket(),
-                uploadResult.getObjectKey()
-        );
+        CaptureRecord captureRecord = buildCaptureRecord(captureId, imageHash, uploadResult, file.getContentType(), force);
 
-        // 数据库状态流转说明：这里先写入一条 comment_index=1 的 PROCESSING 占位记录。
-        // 当前项目仍使用 corpus_record 单表表达一图多评论；Consumer 成功后会复用这条记录写入第一条评论，
-        // 并为第二条及后续评论追加新记录。投递失败会随事务回滚，避免留下没有后台任务处理的悬挂记录。
-        corpusRecordService.save(processingRecord);
+        captureRecordService.save(captureRecord);
         imageHashBloomFilterService.add(imageHash);
 
-        CorpusProcessMessage message = buildProcessMessage(processingRecord, file.getContentType(), force);
+        CorpusProcessMessage message = buildProcessMessage(captureRecord, file.getContentType(), force);
         corpusProcessMessageProducer.send(message);
 
-        CorpusUploadResponse response = buildResponse(List.of(processingRecord), imageHash, false, force);
+        CorpusUploadResponse response = buildAsyncResponse(captureRecord, imageHash, force);
+        response.setCaptureRecordId(captureRecord.getId());
         response.setAsyncSubmitted(true);
         return response;
     }
@@ -145,23 +155,57 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
         return corpusRecordService.listByImageHash(imageHash);
     }
 
-    private CorpusRecord buildProcessingRecord(String captureId, String imageHash, String ossBucket, String ossObjectKey) {
-        CorpusRecord record = baseRecord(captureId, 1, imageHash, ossBucket, ossObjectKey);
-        record.setParseStatus(STATUS_PROCESSING);
-        record.setTags("[]");
+    private CaptureRecord buildCaptureRecord(String captureId,
+                                             String imageHash,
+                                             OssUploadResult uploadResult,
+                                             String mimeType,
+                                             boolean force) {
+        LocalDateTime now = LocalDateTime.now();
+        CaptureRecord record = new CaptureRecord();
+        record.setCaptureId(captureId);
+        record.setImageHash(imageHash);
+        record.setOssBucket(uploadResult.getBucket());
+        record.setOssObjectKey(uploadResult.getObjectKey());
+        record.setMimeType(mimeType);
+        record.setProvider(visionProperties.getProvider());
+        record.setModel(resolveCurrentModel());
+        record.setProcessStatus(STATUS_PROCESSING);
+        record.setRetryCount(0);
+        record.setDuplicate(false);
+        record.setForce(force);
+        record.setCreatedAt(now);
+        record.setUpdatedAt(now);
         return record;
     }
 
-    private CorpusProcessMessage buildProcessMessage(CorpusRecord record, String mimeType, boolean force) {
+    private String resolveCurrentModel() {
+        if ("openrouter".equalsIgnoreCase(visionProperties.getProvider())) {
+            return openRouterProperties.getModel();
+        }
+        return geminiProperties.getModel();
+    }
+
+    private CorpusProcessMessage buildProcessMessage(CaptureRecord captureRecord, String mimeType, boolean force) {
         CorpusProcessMessage message = new CorpusProcessMessage();
-        message.setRecordId(record.getId());
-        message.setCaptureId(record.getCaptureId());
-        message.setImageHash(record.getImageHash());
-        message.setOssBucket(record.getOssBucket());
-        message.setOssObjectKey(record.getOssObjectKey());
+        message.setCaptureRecordId(captureRecord.getId());
+        message.setCaptureId(captureRecord.getCaptureId());
+        message.setImageHash(captureRecord.getImageHash());
+        message.setOssBucket(captureRecord.getOssBucket());
+        message.setOssObjectKey(captureRecord.getOssObjectKey());
         message.setMimeType(mimeType);
         message.setForce(force);
         return message;
+    }
+
+    private CorpusUploadResponse buildAsyncResponse(CaptureRecord captureRecord, String imageHash, boolean force) {
+        CorpusUploadResponse response = new CorpusUploadResponse();
+        response.setCaptureId(captureRecord.getCaptureId());
+        response.setImageHash(imageHash);
+        response.setCaptureRecordId(captureRecord.getId());
+        response.setParseStatus(captureRecord.getProcessStatus());
+        response.setDuplicate(false);
+        response.setForce(force);
+        return response;
     }
 
     private List<CorpusRecord> recognizeAndBuildRecords(byte[] imageBytes,

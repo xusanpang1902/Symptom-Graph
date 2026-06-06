@@ -2,8 +2,12 @@ package com.symptomgraph.dto;
 
 import lombok.Data;
 
+import java.time.LocalDateTime;
+
 @Data
 public class CorpusProcessMessage {
+
+    private Long captureRecordId;
 
     private Long recordId;
 
@@ -18,4 +22,12 @@ public class CorpusProcessMessage {
     private String mimeType;
 
     private boolean force;
+
+    private int retryCount;
+
+    private String lastErrorMessage;
+
+    private String lastErrorType;
+
+    private LocalDateTime lastFailedAt;
 }

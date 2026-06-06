@@ -1,50 +1,50 @@
-【角色与背景】
-你现在是一位资深的 Java 后端架构师。当前项目 Symptom-Graph 是一个基于 Spring Boot 3 + MyBatis-Plus 构建的非结构化截图语料采集系统。
+【当前项目状态】
 
-当前的 MVP 主链路是完全同步阻塞的：
-接收上传请求 -> 计算 SHA-256 (image_hash) -> MySQL 全表查询去重 -> 上传阿里云 OSS -> 同步调用大模型 (Gemini/OpenRouter) 解析 -> 写入 MySQL -> 生成本地 Markdown 文件 -> 返回前端结果。
+Symptom-Graph 当前已经不是同步阻塞 MVP。项目已完成以下主链路：
 
-【当前任务】
-为了提升系统的并发能力、接口响应时间（RT）以及防止大模型 API 被并发打爆，请帮我引入以下三个高阶优化特性。请严格按照以下三个阶段，逐步为我生成或修改代码，绝对不要破坏现有的 force=true 覆盖逻辑和 VisionRecognitionProvider 策略模式。
+上传截图 -> 计算 SHA-256 image_hash -> Redis Bloom Filter 预判 -> MySQL 最终去重 -> 新图上传阿里云 OSS 私有 Bucket -> 写入 capture_record PROCESSING 任务记录 -> 投递 RabbitMQ corpus.process.queue -> 上传接口立即返回 captureRecordId / captureId / PROCESSING -> 前端轮询 capture_record 任务状态 -> Consumer 下载 OSS 原图 -> 调用 VisionRecognitionService 路由到 Gemini 或 OpenRouter -> 成功后写入一条或多条 corpus_record -> 为 SUCCESS 语料生成 Obsidian Markdown -> 更新 capture_record 为 SUCCESS / EMPTY_RESULT / MODEL_FAILED / PARSE_FAILED。
 
-阶段一：引入 Redis 布隆过滤器（Bloom Filter）优化去重性能
-痛点：目前每次上传都需要拿着 image_hash 去 MySQL 做全表查，存在性能瓶颈。
-要求：
+【已完成能力】
 
-引入 Redis（建议使用 Redisson 客户端，方便使用内置的布隆过滤器）。
+1. Redis Bloom Filter 去重前置过滤。
+2. RabbitMQ 异步削峰。
+3. Consumer 后台识别。
+4. Gemini / OpenRouter 多模型 Provider 策略模式。
+5. RabbitMQ retry queue、DLQ、失败分类。
+6. `capture_record` 与 `corpus_record` 双表拆分。
+7. 新图异步链路不再创建 `corpus_record PROCESSING` 占位记录。
+8. 前端基于 `GET /api/v1/corpus/capture-records/{id}` 轮询任务状态，成功后再按 `captureId` 拉取语料。
+9. 任务表重试接口 `POST /api/v1/corpus/capture-records/{id}/retry`。
+10. 历史语料重试接口 `POST /api/v1/corpus/{id}/retry` 仍保留兼容。
 
-在项目启动时或配置类中，初始化一个名为 symptom_graph_hash_bloom 的布隆过滤器（预计元素 10万，误判率 0.01）。
+【当前文档】
 
-修改 CorpusIngestionService 中的去重逻辑：先查布隆过滤器。如果布隆过滤器说“不存在”，直接走后续上传流程（并把 hash 加入过滤器）；如果说“存在”，由于布隆过滤器有假阳性特性，请再穿透去 MySQL 查一次做最终确认。
+当前完整链路总结见：
 
-阶段二：利用 RabbitMQ 实现异步削峰与解耦（替代传统的 @Async）
-痛点：调用大模型耗时极长，且多图并发上传会导致系统崩溃和 API 限流。
-要求：
+```text
+docs/current-chain-summary.md
+```
 
-引入 Spring Boot 的 RabbitMQ 依赖，配置基本的 Exchange（交换机）和 Queue（队列），例如 corpus.process.queue。
+项目计划和里程碑见：
 
-重构上传主干逻辑：当接口接收到一张新图片（非重复）时，同步完成这几步极快的基础操作：
+```text
+SYMPTOM_GRAPH_PLAN.md
+```
 
-计算 Hash。
+【后续建议任务】
 
-上传原图到阿里云 OSS。
+下一阶段不要重复实现 Redis、RabbitMQ、DLQ 或双表拆分。建议从 Milestone 15 开始：
 
-在 corpus_record 表中插入一条基础记录，将 parse_status 设为 PROCESSING（处理中）。
+1. 增加按 `platform`、`process_status` / `parse_status`、`tag`、`capture_id`、时间范围的查询筛选。
+2. 增加分页列表 API。
+3. 增加 Thymeleaf 管理页。
+4. 增加 `raw_content` / `context_target` 关键词检索。
+5. 暂不引入 Elasticsearch，第一版优先使用 MySQL 查询能力。
 
-构建一个包含 recordId、imageUrl 等必要信息的 Message，发送到 RabbitMQ 队列。
+【必须保留的约束】
 
-接口立即向前端返回 HTTP 200 和当前记录的 id（不再原地等待大模型响应）。
-
-阶段三：编写消费端逻辑（Consumer）
-要求：
-
-创建一个 RabbitMQ 监听器（Listener），监听 corpus.process.queue。
-
-消费者拿到消息后，在后台线程去调用 VisionRecognitionService 获取大模型解析结果。
-
-如果解析成功：将多条评论结果更新回 MySQL，将状态改为 SUCCESS，并调用 MarkdownExportService 生成 Markdown 文件。
-
-如果解析失败或出现异常：捕获异常，将状态更新为 MODEL_FAILED 或 PARSE_FAILED，记录错误信息。
-
-【输出要求】
-请先给我一份改造方案的代码结构清单（例如需要新增哪些依赖、哪些配置类、修改哪些核心方法）。在我确认清单无误后，再逐个为我输出具体的 Java 代码。请在核心网络、队列投递和数据库状态流转的代码上方添加详细的中文注释。
+1. 不破坏 `force=true` 安全语义：重新识别失败不能删除或覆盖旧语料。
+2. 不破坏 `VisionRecognitionProvider` / `VisionRecognitionService` 多模型策略模式。
+3. `raw_content` / `context_target` 必须来自截图可见文字，不得编造。
+4. 标签必须是经验性、现象性标签，数据库中不带 `#`。
+5. 真实 20 张截图测试不能伪造，必须等待用户提供真实截图。
