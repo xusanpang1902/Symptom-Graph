@@ -411,6 +411,7 @@ GET /api/v1/corpus/{id}/image-url
 - [ ] 补充系统架构图，覆盖上传接口、OSS、RabbitMQ、Consumer、Provider、MySQL 和 Markdown 输出。
 - [ ] 补充核心链路时序图，区分新图、重复图、`force=true` 和模型失败路径。
 - [ ] 准备项目讲解稿，突出图片去重、异步削峰、私有 OSS 证据链、多模型策略和失败状态管理。
+- [x] 新增 `docs/architecture-learning-route.md`，作为当前异步双表架构、模块职责和《A Philosophy of Software Design》相关设计复盘的学习路线文档。
 - [ ] 准备 3 到 5 个真实截图演示样例，展示从上传到 Obsidian Markdown 输出的完整闭环。
 
 建议优先级：中。该扩展不直接改变业务能力，但能显著提升项目展示效果。
