@@ -412,6 +412,7 @@ GET /api/v1/corpus/{id}/image-url
 - [ ] 补充核心链路时序图，区分新图、重复图、`force=true` 和模型失败路径。
 - [ ] 准备项目讲解稿，突出图片去重、异步削峰、私有 OSS 证据链、多模型策略和失败状态管理。
 - [x] 新增 `docs/architecture-learning-route.md`，作为当前异步双表架构、模块职责和《A Philosophy of Software Design》相关设计复盘的学习路线文档。
+- [x] 新增 `docs/future-optimization-notes.md`，记录命名清晰化、Consumer 幂等、`EMPTY_RESULT`、失败重试治理、查询管理、人工校对和 Provider 治理等未来优化方向，并约定后续讨论中发现优化点时保留触发语境、当前设计、潜在问题、优化想法和归属判断。
 - [ ] 准备 3 到 5 个真实截图演示样例，展示从上传到 Obsidian Markdown 输出的完整闭环。
 
 建议优先级：中。该扩展不直接改变业务能力，但能显著提升项目展示效果。
