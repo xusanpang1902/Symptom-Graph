@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.symptomgraph.config.GeminiProperties;
+import com.symptomgraph.dto.VisionRecognitionResult;
 import com.symptomgraph.exception.GeminiRecognitionException;
 import com.symptomgraph.exception.VisionRecognitionException;
 import com.symptomgraph.service.GeminiVisionService;
@@ -20,6 +21,14 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Gemini 视觉识别 Provider 实现。
+ *
+ * <p>从架构上看，这个类是应用内部统一视觉识别接口与 Gemini generateContent HTTP API
+ * 之间的适配层。它只负责 Gemini 特有的请求组装、响应外壳提取和异常归一化；
+ * Prompt 内容与识别 JSON 解析交给共享组件处理，保证 Gemini 与其他 Provider
+ * 在业务语义上保持一致。</p>
+ */
 @Service
 public class GeminiVisionServiceImpl implements GeminiVisionService {
 
@@ -47,7 +56,9 @@ public class GeminiVisionServiceImpl implements GeminiVisionService {
     }
 
     @Override
-    public com.symptomgraph.dto.VisionRecognitionResult recognize(byte[] imageBytes, String mimeType) {
+    public VisionRecognitionResult recognize(byte[] imageBytes, String mimeType) {
+        // 在发起远程模型调用前先校验本地前置条件，避免无效请求进入外部服务。
+        // 这些错误统一归类为模型阶段失败，便于采集链路复用同一套重试和失败处理逻辑。
         if (imageBytes == null || imageBytes.length == 0) {
             throw new GeminiRecognitionException(STATUS_MODEL_FAILED, "Image bytes must not be empty");
         }
@@ -58,33 +69,37 @@ public class GeminiVisionServiceImpl implements GeminiVisionService {
             throw new GeminiRecognitionException(STATUS_MODEL_FAILED, "Gemini API key is not configured");
         }
 
-        String responseBody = callGemini(imageBytes, mimeType);
-        String modelText = extractCandidateText(responseBody);
-        com.symptomgraph.dto.VisionRecognitionResult result;
+        String providerResponseBody = callGemini(imageBytes, mimeType);
+        String modelContentText = extractCandidateText(providerResponseBody);
+        VisionRecognitionResult recognitionResult;
         try {
-            result = parseRecognitionJson(modelText);
+            // 解析器保持 Provider 无关。Gemini 可以有自己的响应外壳，
+            // 但提取出的模型正文必须符合采集链路统一使用的识别结果结构。
+            recognitionResult = parseRecognitionJson(modelContentText);
         } catch (VisionRecognitionException ex) {
-            throw new GeminiRecognitionException(ex.getParseStatus(), ex.getMessage(), responseBody, ex);
+            throw new GeminiRecognitionException(ex.getParseStatus(), ex.getMessage(), providerResponseBody, ex);
         }
-        result.setModelRawResponse(responseBody);
-        return result;
+        recognitionResult.setModelRawResponse(providerResponseBody);
+        return recognitionResult;
     }
 
     private String callGemini(byte[] imageBytes, String mimeType) {
         Map<String, Object> requestBody = buildRequestBody(imageBytes, mimeType);
 
         try {
-            String responseBody = restClient.post()
+            // Gemini 的 API key 通过 query 参数传递，因此 URL 拼装集中在
+            // buildGenerateContentUrl() 中处理。
+            String providerResponseBody = restClient.post()
                     .uri(buildGenerateContentUrl())
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(requestBody)
                     .retrieve()
                     .body(String.class);
 
-            if (!StringUtils.hasText(responseBody)) {
+            if (!StringUtils.hasText(providerResponseBody)) {
                 throw new GeminiRecognitionException(STATUS_MODEL_FAILED, "Gemini returned an empty response");
             }
-            return responseBody;
+            return providerResponseBody;
         } catch (RestClientResponseException ex) {
             throw new GeminiRecognitionException(
                     STATUS_MODEL_FAILED,
@@ -100,6 +115,8 @@ public class GeminiVisionServiceImpl implements GeminiVisionService {
     private Map<String, Object> buildRequestBody(byte[] imageBytes, String mimeType) {
         String base64Image = Base64.getEncoder().encodeToString(imageBytes);
 
+        // Gemini 要求图片以内联 base64 的形式和 Prompt 放在同一组 content parts 中。
+        // temperature=0 用于降低输出随机性，response_mime_type 要求模型尽量返回 JSON。
         return Map.of(
                 "contents", List.of(
                         Map.of("parts", List.of(
@@ -126,31 +143,32 @@ public class GeminiVisionServiceImpl implements GeminiVisionService {
         return endpoint + "/models/" + properties.getModel() + ":generateContent?key=" + apiKey;
     }
 
-    String extractCandidateText(String responseBody) {
+    String extractCandidateText(String providerResponseBody) {
         try {
-            JsonNode root = objectMapper.readTree(responseBody);
+            JsonNode root = objectMapper.readTree(providerResponseBody);
             JsonNode parts = root.path("candidates").path(0).path("content").path("parts");
             if (!parts.isArray() || parts.isEmpty()) {
-                throw new GeminiRecognitionException(STATUS_MODEL_FAILED, "Gemini response contains no candidate text", responseBody, null);
+                throw new GeminiRecognitionException(STATUS_MODEL_FAILED, "Gemini response contains no candidate text", providerResponseBody, null);
             }
 
-            StringBuilder text = new StringBuilder();
+            // Gemini 可能把同一个候选结果拆成多个 text part，解析前需要先拼接。
+            StringBuilder modelContentText = new StringBuilder();
             for (JsonNode part : parts) {
                 if (part.hasNonNull("text")) {
-                    text.append(part.get("text").asText());
+                    modelContentText.append(part.get("text").asText());
                 }
             }
 
-            if (!StringUtils.hasText(text)) {
-                throw new GeminiRecognitionException(STATUS_MODEL_FAILED, "Gemini response candidate text is empty", responseBody, null);
+            if (!StringUtils.hasText(modelContentText)) {
+                throw new GeminiRecognitionException(STATUS_MODEL_FAILED, "Gemini response candidate text is empty", providerResponseBody, null);
             }
-            return text.toString();
+            return modelContentText.toString();
         } catch (JsonProcessingException ex) {
-            throw new GeminiRecognitionException(STATUS_MODEL_FAILED, "Gemini response is not valid JSON", responseBody, ex);
+            throw new GeminiRecognitionException(STATUS_MODEL_FAILED, "Gemini response is not valid JSON", providerResponseBody, ex);
         }
     }
 
-    com.symptomgraph.dto.VisionRecognitionResult parseRecognitionJson(String modelText) {
-        return jsonParser.parse(modelText);
+    VisionRecognitionResult parseRecognitionJson(String modelContentText) {
+        return jsonParser.parse(modelContentText);
     }
 }

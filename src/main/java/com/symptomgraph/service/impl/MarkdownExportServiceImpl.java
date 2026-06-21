@@ -30,50 +30,52 @@ public class MarkdownExportServiceImpl implements MarkdownExportService {
     }
 
     @Override
-    public String export(CorpusRecord record) {
-        String filename = buildFilename(record);
-        Path outputPath = Path.of(properties.getOutputDir(), filename);
+    public String export(CorpusRecord corpusRecord) {
+        String markdownFilename = buildMarkdownFilename(corpusRecord);
+        Path markdownOutputPath = Path.of(properties.getOutputDir(), markdownFilename);
 
         try {
-            Files.createDirectories(outputPath.getParent());
-            Files.writeString(outputPath, buildMarkdown(record), StandardCharsets.UTF_8);
-            return outputPath.toString().replace('\\', '/');
+            Files.createDirectories(markdownOutputPath.getParent());
+            Files.writeString(markdownOutputPath, buildMarkdownContent(corpusRecord), StandardCharsets.UTF_8);
+            return markdownOutputPath.toString().replace('\\', '/');
         } catch (IOException ex) {
             throw new IllegalStateException("Failed to export markdown file", ex);
         }
     }
 
-    private String buildMarkdown(CorpusRecord record) {
-        List<String> tags = parseTags(record.getTags());
-        StringBuilder markdown = new StringBuilder();
-        markdown.append("---\n");
-        markdown.append("id: ").append(record.getId()).append("\n");
-        markdown.append("capture_id: \"").append(escapeYaml(record.getCaptureId())).append("\"\n");
-        markdown.append("comment_index: ").append(record.getCommentIndex()).append("\n");
-        markdown.append("platform: \"").append(escapeYaml(record.getPlatform())).append("\"\n");
-        markdown.append("original_publish_time: ").append(record.getOriginalPublishTime() == null ? "" : DATE_TIME_FORMATTER.format(record.getOriginalPublishTime())).append("\n");
-        markdown.append("collected_time: \"").append(record.getCollectedTime() == null ? "" : DATE_TIME_FORMATTER.format(record.getCollectedTime())).append("\"\n");
-        markdown.append("tags:\n");
-        for (String tag : tags) {
-            markdown.append("  - \"").append(escapeYaml(tag)).append("\"\n");
+    private String buildMarkdownContent(CorpusRecord corpusRecord) {
+        List<String> databaseTags = parseTags(corpusRecord.getTags());
+        StringBuilder markdownContent = new StringBuilder();
+
+        // Markdown 是长期研究资料，只写稳定证据链字段，不写会过期的 signed URL。
+        markdownContent.append("---\n");
+        markdownContent.append("id: ").append(corpusRecord.getId()).append("\n");
+        markdownContent.append("capture_id: \"").append(escapeYaml(corpusRecord.getCaptureId())).append("\"\n");
+        markdownContent.append("comment_index: ").append(corpusRecord.getCommentIndex()).append("\n");
+        markdownContent.append("platform: \"").append(escapeYaml(corpusRecord.getPlatform())).append("\"\n");
+        markdownContent.append("original_publish_time: ").append(corpusRecord.getOriginalPublishTime() == null ? "" : DATE_TIME_FORMATTER.format(corpusRecord.getOriginalPublishTime())).append("\n");
+        markdownContent.append("collected_time: \"").append(corpusRecord.getCollectedTime() == null ? "" : DATE_TIME_FORMATTER.format(corpusRecord.getCollectedTime())).append("\"\n");
+        markdownContent.append("tags:\n");
+        for (String tag : databaseTags) {
+            markdownContent.append("  - \"").append(escapeYaml(tag)).append("\"\n");
         }
-        markdown.append("obsidian_tags:\n");
-        for (String tag : tags) {
-            markdown.append("  - \"#").append(escapeYaml(tag)).append("\"\n");
+        markdownContent.append("obsidian_tags:\n");
+        for (String tag : databaseTags) {
+            markdownContent.append("  - \"#").append(escapeYaml(tag)).append("\"\n");
         }
-        markdown.append("image_hash: \"").append(escapeYaml(record.getImageHash())).append("\"\n");
-        markdown.append("oss_object_key: \"").append(escapeYaml(record.getOssObjectKey())).append("\"\n");
-        markdown.append("---\n\n");
-        markdown.append("# ").append(valueOrUnknown(record.getPlatform())).append("语料 ").append(record.getId()).append("\n\n");
-        markdown.append("## 原始评论\n\n");
-        markdown.append("> ").append(valueOrEmpty(record.getRawContent()).replace("\n", "\n> ")).append("\n\n");
-        markdown.append("## 上下文原文\n\n");
-        markdown.append("> ").append(valueOrEmpty(record.getContextTarget()).replace("\n", "\n> ")).append("\n\n");
-        markdown.append("## 证据链\n\n");
-        markdown.append("- image_hash: `").append(valueOrEmpty(record.getImageHash())).append("`\n");
-        markdown.append("- oss_object_key: `").append(valueOrEmpty(record.getOssObjectKey())).append("`\n\n");
-        markdown.append("## 研究备注\n");
-        return markdown.toString();
+        markdownContent.append("image_hash: \"").append(escapeYaml(corpusRecord.getImageHash())).append("\"\n");
+        markdownContent.append("oss_object_key: \"").append(escapeYaml(corpusRecord.getOssObjectKey())).append("\"\n");
+        markdownContent.append("---\n\n");
+        markdownContent.append("# ").append(valueOrUnknown(corpusRecord.getPlatform())).append("语料 ").append(corpusRecord.getId()).append("\n\n");
+        markdownContent.append("## 原始评论\n\n");
+        markdownContent.append("> ").append(valueOrEmpty(corpusRecord.getRawContent()).replace("\n", "\n> ")).append("\n\n");
+        markdownContent.append("## 上下文原文\n\n");
+        markdownContent.append("> ").append(valueOrEmpty(corpusRecord.getContextTarget()).replace("\n", "\n> ")).append("\n\n");
+        markdownContent.append("## 证据链\n\n");
+        markdownContent.append("- image_hash: `").append(valueOrEmpty(corpusRecord.getImageHash())).append("`\n");
+        markdownContent.append("- oss_object_key: `").append(valueOrEmpty(corpusRecord.getOssObjectKey())).append("`\n\n");
+        markdownContent.append("## 研究备注\n");
+        return markdownContent.toString();
     }
 
     private List<String> parseTags(String tagsJson) {
@@ -88,17 +90,17 @@ public class MarkdownExportServiceImpl implements MarkdownExportService {
         }
     }
 
-    private String buildFilename(CorpusRecord record) {
-        String captureId = StringUtils.hasText(record.getCaptureId()) ? record.getCaptureId() : "unknown-capture";
-        String commentIndex = record.getCommentIndex() == null ? "0" : record.getCommentIndex().toString();
-        String platform = StringUtils.hasText(record.getPlatform()) ? record.getPlatform() : "unknown";
-        String filename = sanitizeFilename(captureId + "-" + commentIndex + "-" + platform + ".md");
-        if (filename.length() <= MAX_FILENAME_LENGTH) {
-            return filename;
+    private String buildMarkdownFilename(CorpusRecord corpusRecord) {
+        String captureBatchId = StringUtils.hasText(corpusRecord.getCaptureId()) ? corpusRecord.getCaptureId() : "unknown-capture";
+        String commentIndex = corpusRecord.getCommentIndex() == null ? "0" : corpusRecord.getCommentIndex().toString();
+        String platform = StringUtils.hasText(corpusRecord.getPlatform()) ? corpusRecord.getPlatform() : "unknown";
+        String markdownFilename = sanitizeFilename(captureBatchId + "-" + commentIndex + "-" + platform + ".md");
+        if (markdownFilename.length() <= MAX_FILENAME_LENGTH) {
+            return markdownFilename;
         }
 
         String extension = ".md";
-        return filename.substring(0, MAX_FILENAME_LENGTH - extension.length()) + extension;
+        return markdownFilename.substring(0, MAX_FILENAME_LENGTH - extension.length()) + extension;
     }
 
     private String sanitizeFilename(String filename) {

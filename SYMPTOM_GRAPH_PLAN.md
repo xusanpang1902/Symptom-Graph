@@ -413,6 +413,9 @@ GET /api/v1/corpus/{id}/image-url
 - [ ] 准备项目讲解稿，突出图片去重、异步削峰、私有 OSS 证据链、多模型策略和失败状态管理。
 - [x] 新增 `docs/architecture-learning-route.md`，作为当前异步双表架构、模块职责和《A Philosophy of Software Design》相关设计复盘的学习路线文档。
 - [x] 新增 `docs/future-optimization-notes.md`，记录命名清晰化、Consumer 幂等、`EMPTY_RESULT`、失败重试治理、查询管理、人工校对和 Provider 治理等未来优化方向，并约定后续讨论中发现优化点时保留触发语境、当前设计、潜在问题、优化想法和归属判断。
+- [x] 完成第一阶段内部命名清晰化，重点覆盖识别链路和 Markdown 导出链路。
 - [ ] 准备 3 到 5 个真实截图演示样例，展示从上传到 Obsidian Markdown 输出的完整闭环。
+
+说明：第一阶段命名清晰化仅调整 Java 内部变量、私有方法和少量解释性注释，不修改数据库字段、API URL、JSON 字段或对外 DTO 字段。当前已将主链路中的任务表主键语义明确为 `captureTask`，将 `capture_id` 的内部语义明确为 `captureBatchId`，将旧 `corpus_record PROCESSING` 兼容路径命名为 `legacyProcessingCorpusRecord`，并在 Gemini/OpenRouter Provider、统一 JSON 解析器和 Markdown 导出服务中区分厂商响应体、模型正文、统一识别结果、Markdown 文件名、输出路径和正文内容。
 
 建议优先级：中。该扩展不直接改变业务能力，但能显著提升项目展示效果。

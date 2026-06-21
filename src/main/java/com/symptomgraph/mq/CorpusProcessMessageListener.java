@@ -71,149 +71,150 @@ public class CorpusProcessMessageListener {
 
     @Transactional
     @RabbitListener(queues = "${app.rabbitmq.corpus-process-queue}", autoStartup = "${app.rabbitmq.listener-auto-startup:true}")
-    public void handle(CorpusProcessMessage message) {
-        CaptureRecord captureRecord = resolveCaptureRecord(message);
-        CorpusRecord processingRecord = resolveProcessingRecord(message);
-        if (captureRecord == null && processingRecord == null) {
+    public void handle(CorpusProcessMessage processMessage) {
+        CaptureRecord captureTask = resolveCaptureTask(processMessage);
+        CorpusRecord legacyProcessingCorpusRecord = resolveLegacyProcessingCorpusRecord(processMessage);
+        if (captureTask == null && legacyProcessingCorpusRecord == null) {
             log.warn("Processing task not found, skip message: captureRecordId={}, recordId={}, captureId={}",
-                    message.getCaptureRecordId(), message.getRecordId(), message.getCaptureId());
+                    processMessage.getCaptureRecordId(), processMessage.getRecordId(), processMessage.getCaptureId());
             return;
         }
 
         try {
             // 核心网络操作说明：Consumer 在后台线程从私有 OSS 下载原图字节，再调用统一的 VisionRecognitionService。
             // 这里不关心当前 provider 是 Gemini 还是 OpenRouter，从而保留 Milestone 9 已完成的 Provider 策略模式。
-            byte[] imageBytes = ossStorageService.download(message.getOssObjectKey());
-            VisionRecognitionResult recognitionResult = visionRecognitionService.recognize(imageBytes, message.getMimeType());
-            List<CorpusRecord> records = buildRecognitionRecords(captureRecord, processingRecord, recognitionResult);
-            if (records.isEmpty()) {
-                markCaptureEmpty(captureRecord, recognitionResult);
+            byte[] imageBytes = ossStorageService.download(processMessage.getOssObjectKey());
+            VisionRecognitionResult recognitionResult = visionRecognitionService.recognize(imageBytes, processMessage.getMimeType());
+            List<CorpusRecord> recognizedCorpusRecords = buildRecognitionCorpusRecords(
+                    captureTask, legacyProcessingCorpusRecord, recognitionResult);
+            if (recognizedCorpusRecords.isEmpty()) {
+                markCaptureEmpty(captureTask, recognitionResult);
                 return;
             }
 
             // 数据库状态流转说明：新链路由 capture_record 承载任务状态，corpus_record 只保存识别出的语料。
             // 为兼容旧消息，如果消息仍携带 recordId，则第一条评论继续复用旧 PROCESSING 占位记录。
-            persistRecognitionRecords(processingRecord, records);
-            markCaptureCompleted(captureRecord, records.get(0));
+            persistRecognitionCorpusRecords(legacyProcessingCorpusRecord, recognizedCorpusRecords);
+            markCaptureCompleted(captureTask, recognizedCorpusRecords.get(0));
         } catch (RuntimeException ex) {
-            handleFailure(captureRecord, processingRecord, message, failureClassifier.classify(ex));
+            handleFailure(captureTask, legacyProcessingCorpusRecord, processMessage, failureClassifier.classify(ex));
         }
     }
 
-    private CorpusRecord resolveProcessingRecord(CorpusProcessMessage message) {
-        if (message.getRecordId() == null) {
+    private CorpusRecord resolveLegacyProcessingCorpusRecord(CorpusProcessMessage processMessage) {
+        if (processMessage.getRecordId() == null) {
             return null;
         }
-        CorpusRecord processingRecord = corpusRecordService.getById(message.getRecordId());
-        if (processingRecord == null) {
+        CorpusRecord legacyProcessingCorpusRecord = corpusRecordService.getById(processMessage.getRecordId());
+        if (legacyProcessingCorpusRecord == null) {
             log.warn("Corpus processing record not found, continue with capture_record when possible: recordId={}, captureId={}",
-                    message.getRecordId(), message.getCaptureId());
+                    processMessage.getRecordId(), processMessage.getCaptureId());
         }
-        return processingRecord;
+        return legacyProcessingCorpusRecord;
     }
 
-    private CaptureRecord resolveCaptureRecord(CorpusProcessMessage message) {
-        if (message.getCaptureRecordId() != null) {
-            CaptureRecord captureRecord = captureRecordService.getById(message.getCaptureRecordId());
-            if (captureRecord != null) {
-                return captureRecord;
+    private CaptureRecord resolveCaptureTask(CorpusProcessMessage processMessage) {
+        if (processMessage.getCaptureRecordId() != null) {
+            CaptureRecord captureTask = captureRecordService.getById(processMessage.getCaptureRecordId());
+            if (captureTask != null) {
+                return captureTask;
             }
             log.warn("Capture processing record not found by id, fallback to captureId: captureRecordId={}, captureId={}",
-                    message.getCaptureRecordId(), message.getCaptureId());
+                    processMessage.getCaptureRecordId(), processMessage.getCaptureId());
         }
-        if (StringUtils.hasText(message.getCaptureId())) {
-            return captureRecordService.getByCaptureId(message.getCaptureId());
+        if (StringUtils.hasText(processMessage.getCaptureId())) {
+            return captureRecordService.getByCaptureId(processMessage.getCaptureId());
         }
         return null;
     }
 
-    private List<CorpusRecord> buildRecognitionRecords(CaptureRecord captureRecord,
-                                                       CorpusRecord processingRecord,
-                                                       VisionRecognitionResult result) {
-        List<VisionRecognitionItem> items = result.getItems() == null ? List.of() : result.getItems();
-        if (items.isEmpty()) {
-            if (processingRecord == null) {
+    private List<CorpusRecord> buildRecognitionCorpusRecords(CaptureRecord captureTask,
+                                                             CorpusRecord legacyProcessingCorpusRecord,
+                                                             VisionRecognitionResult recognitionResult) {
+        List<VisionRecognitionItem> recognizedItems = recognitionResult.getItems() == null ? List.of() : recognitionResult.getItems();
+        if (recognizedItems.isEmpty()) {
+            if (legacyProcessingCorpusRecord == null) {
                 return List.of();
             }
-            CorpusRecord record = copyBase(processingRecord, processingRecord.getCommentIndex());
-            applyRecognitionResult(record, result);
-            record.setTags("[]");
-            record.setParseStatus(STATUS_EMPTY_RESULT);
-            record.setErrorMessage("Vision recognition returned no visible comment items");
-            return List.of(record);
+            CorpusRecord emptyResultRecord = copyBase(legacyProcessingCorpusRecord, legacyProcessingCorpusRecord.getCommentIndex());
+            applyRecognitionResult(emptyResultRecord, recognitionResult);
+            emptyResultRecord.setTags("[]");
+            emptyResultRecord.setParseStatus(STATUS_EMPTY_RESULT);
+            emptyResultRecord.setErrorMessage("Vision recognition returned no visible comment items");
+            return List.of(emptyResultRecord);
         }
 
-        List<CorpusRecord> records = new ArrayList<>();
-        for (int i = 0; i < items.size(); i++) {
-            VisionRecognitionItem item = items.get(i);
-            Integer commentIndex = item.getCommentIndex() == null ? i + 1 : item.getCommentIndex();
-            CorpusRecord record = processingRecord == null
-                    ? copyBase(captureRecord, commentIndex)
-                    : copyBase(processingRecord, commentIndex);
-            if (i == 0 && processingRecord != null) {
-                record.setId(processingRecord.getId());
+        List<CorpusRecord> corpusRecords = new ArrayList<>();
+        for (int i = 0; i < recognizedItems.size(); i++) {
+            VisionRecognitionItem recognizedItem = recognizedItems.get(i);
+            Integer commentIndex = recognizedItem.getCommentIndex() == null ? i + 1 : recognizedItem.getCommentIndex();
+            CorpusRecord corpusRecord = legacyProcessingCorpusRecord == null
+                    ? copyBase(captureTask, commentIndex)
+                    : copyBase(legacyProcessingCorpusRecord, commentIndex);
+            if (i == 0 && legacyProcessingCorpusRecord != null) {
+                corpusRecord.setId(legacyProcessingCorpusRecord.getId());
             }
-            applyRecognitionResult(record, result);
-            record.setRawContent(item.getRawContent());
-            record.setTags(toJson(sanitizeTags(item.getTags())));
-            records.add(record);
+            applyRecognitionResult(corpusRecord, recognitionResult);
+            corpusRecord.setRawContent(recognizedItem.getRawContent());
+            corpusRecord.setTags(toJson(sanitizeTags(recognizedItem.getTags())));
+            corpusRecords.add(corpusRecord);
         }
-        return records;
+        return corpusRecords;
     }
 
-    private void persistRecognitionRecords(CorpusRecord processingRecord, List<CorpusRecord> records) {
-        CorpusRecord firstRecord = records.get(0);
-        if (processingRecord == null) {
-            corpusRecordService.saveBatch(records);
+    private void persistRecognitionCorpusRecords(CorpusRecord legacyProcessingCorpusRecord, List<CorpusRecord> corpusRecords) {
+        CorpusRecord firstCorpusRecord = corpusRecords.get(0);
+        if (legacyProcessingCorpusRecord == null) {
+            corpusRecordService.saveBatch(corpusRecords);
         } else {
-            firstRecord.setId(processingRecord.getId());
+            firstCorpusRecord.setId(legacyProcessingCorpusRecord.getId());
 
-            List<CorpusRecord> additionalRecords = records.size() <= 1 ? List.of() : records.subList(1, records.size());
-            if (!additionalRecords.isEmpty()) {
-                corpusRecordService.saveBatch(additionalRecords);
+            List<CorpusRecord> additionalCorpusRecords = corpusRecords.size() <= 1 ? List.of() : corpusRecords.subList(1, corpusRecords.size());
+            if (!additionalCorpusRecords.isEmpty()) {
+                corpusRecordService.saveBatch(additionalCorpusRecords);
             }
         }
 
-        for (CorpusRecord record : records) {
-            if (STATUS_SUCCESS.equals(record.getParseStatus())) {
-                record.setMarkdownPath(markdownExportService.export(record));
+        for (CorpusRecord corpusRecord : corpusRecords) {
+            if (STATUS_SUCCESS.equals(corpusRecord.getParseStatus())) {
+                corpusRecord.setMarkdownPath(markdownExportService.export(corpusRecord));
             }
         }
-        corpusRecordService.updateBatchById(records);
+        corpusRecordService.updateBatchById(corpusRecords);
     }
 
-    private void handleFailure(CaptureRecord captureRecord,
-                               CorpusRecord record,
-                               CorpusProcessMessage message,
+    private void handleFailure(CaptureRecord captureTask,
+                               CorpusRecord legacyProcessingCorpusRecord,
+                               CorpusProcessMessage processMessage,
                                CorpusProcessFailure failure) {
-        int nextRetryCount = message.getRetryCount() + 1;
+        int nextRetryCount = processMessage.getRetryCount() + 1;
         LocalDateTime failedAt = LocalDateTime.now();
         if (failure.retryable() && nextRetryCount <= rabbitMqProperties.getMaxRetryAttempts()) {
-            if (record != null) {
-                record.setRetryCount(nextRetryCount);
-                record.setLastErrorType(failure.errorType());
-                record.setLastFailedAt(failedAt);
-                record.setErrorMessage(failure.errorMessage());
-                record.setModelRawResponse(firstText(failure.modelRawResponse(), record.getModelRawResponse()));
-                record.setUpdatedAt(failedAt);
-                corpusRecordService.updateById(record);
+            if (legacyProcessingCorpusRecord != null) {
+                legacyProcessingCorpusRecord.setRetryCount(nextRetryCount);
+                legacyProcessingCorpusRecord.setLastErrorType(failure.errorType());
+                legacyProcessingCorpusRecord.setLastFailedAt(failedAt);
+                legacyProcessingCorpusRecord.setErrorMessage(failure.errorMessage());
+                legacyProcessingCorpusRecord.setModelRawResponse(firstText(failure.modelRawResponse(), legacyProcessingCorpusRecord.getModelRawResponse()));
+                legacyProcessingCorpusRecord.setUpdatedAt(failedAt);
+                corpusRecordService.updateById(legacyProcessingCorpusRecord);
             }
-            markCaptureRetrying(captureRecord, failure, nextRetryCount, failedAt);
+            markCaptureRetrying(captureTask, failure, nextRetryCount, failedAt);
 
-            CorpusProcessMessage retryMessage = copyMessage(message);
+            CorpusProcessMessage retryMessage = copyMessage(processMessage);
             retryMessage.setRetryCount(nextRetryCount);
             retryMessage.setLastErrorType(failure.errorType());
             retryMessage.setLastErrorMessage(failure.errorMessage());
             retryMessage.setLastFailedAt(failedAt);
             corpusProcessMessageProducer.sendRetry(retryMessage);
             log.warn("Corpus processing retry scheduled: captureRecordId={}, recordId={}, captureId={}, retry={}/{}, errorType={}, error={}",
-                    message.getCaptureRecordId(), message.getRecordId(), message.getCaptureId(), nextRetryCount, rabbitMqProperties.getMaxRetryAttempts(),
+                    processMessage.getCaptureRecordId(), processMessage.getRecordId(), processMessage.getCaptureId(), nextRetryCount, rabbitMqProperties.getMaxRetryAttempts(),
                     failure.errorType(), failure.errorMessage());
             return;
         }
 
-        markFinalFailed(captureRecord, record, failure, nextRetryCount, failedAt);
-        CorpusProcessMessage deadLetterMessage = copyMessage(message);
+        markFinalFailed(captureTask, legacyProcessingCorpusRecord, failure, nextRetryCount, failedAt);
+        CorpusProcessMessage deadLetterMessage = copyMessage(processMessage);
         deadLetterMessage.setRetryCount(nextRetryCount);
         deadLetterMessage.setLastErrorType(failure.errorType());
         deadLetterMessage.setLastErrorMessage(failure.errorMessage());
@@ -221,147 +222,148 @@ public class CorpusProcessMessageListener {
         corpusProcessMessageProducer.sendDeadLetter(deadLetterMessage);
     }
 
-    private void markFinalFailed(CaptureRecord captureRecord,
-                                 CorpusRecord record,
+    private void markFinalFailed(CaptureRecord captureTask,
+                                 CorpusRecord legacyProcessingCorpusRecord,
                                  CorpusProcessFailure failure,
                                  int retryCount,
                                  LocalDateTime failedAt) {
-        if (record != null) {
-            record.setParseStatus(StringUtils.hasText(failure.parseStatus()) ? failure.parseStatus() : STATUS_PARSE_FAILED);
-            record.setErrorMessage(failure.errorMessage());
-            record.setModelRawResponse(firstText(failure.modelRawResponse(), record.getModelRawResponse()));
-            record.setTags(StringUtils.hasText(record.getTags()) ? record.getTags() : "[]");
-            record.setRetryCount(retryCount);
-            record.setLastErrorType(failure.errorType());
-            record.setLastFailedAt(failedAt);
-            record.setUpdatedAt(failedAt);
-            corpusRecordService.updateById(record);
+        if (legacyProcessingCorpusRecord != null) {
+            legacyProcessingCorpusRecord.setParseStatus(StringUtils.hasText(failure.parseStatus()) ? failure.parseStatus() : STATUS_PARSE_FAILED);
+            legacyProcessingCorpusRecord.setErrorMessage(failure.errorMessage());
+            legacyProcessingCorpusRecord.setModelRawResponse(firstText(failure.modelRawResponse(), legacyProcessingCorpusRecord.getModelRawResponse()));
+            legacyProcessingCorpusRecord.setTags(StringUtils.hasText(legacyProcessingCorpusRecord.getTags()) ? legacyProcessingCorpusRecord.getTags() : "[]");
+            legacyProcessingCorpusRecord.setRetryCount(retryCount);
+            legacyProcessingCorpusRecord.setLastErrorType(failure.errorType());
+            legacyProcessingCorpusRecord.setLastFailedAt(failedAt);
+            legacyProcessingCorpusRecord.setUpdatedAt(failedAt);
+            corpusRecordService.updateById(legacyProcessingCorpusRecord);
         }
-        if (captureRecord != null) {
-            applyCaptureFailure(captureRecord, failure, retryCount, failedAt,
+        if (captureTask != null) {
+            applyCaptureFailure(captureTask, failure, retryCount, failedAt,
                     StringUtils.hasText(failure.parseStatus()) ? failure.parseStatus() : STATUS_PARSE_FAILED);
-            captureRecordService.updateById(captureRecord);
+            captureRecordService.updateById(captureTask);
         }
         log.warn("Corpus processing failed finally: captureRecordId={}, recordId={}, captureId={}, retryCount={}, errorType={}, error={}",
-                captureRecord == null ? null : captureRecord.getId(), record == null ? null : record.getId(),
-                captureRecord == null ? null : captureRecord.getCaptureId(), retryCount,
+                captureTask == null ? null : captureTask.getId(),
+                legacyProcessingCorpusRecord == null ? null : legacyProcessingCorpusRecord.getId(),
+                captureTask == null ? null : captureTask.getCaptureId(), retryCount,
                 failure.errorType(), failure.errorMessage());
     }
 
-    private void markCaptureCompleted(CaptureRecord captureRecord, CorpusRecord firstRecord) {
-        if (captureRecord == null) {
+    private void markCaptureCompleted(CaptureRecord captureTask, CorpusRecord firstCorpusRecord) {
+        if (captureTask == null) {
             return;
         }
         LocalDateTime now = LocalDateTime.now();
-        captureRecord.setProcessStatus(firstRecord.getParseStatus());
-        captureRecord.setErrorMessage(firstRecord.getErrorMessage());
-        captureRecord.setModelRawResponse(firstRecord.getModelRawResponse());
-        captureRecord.setRetryCount(0);
-        captureRecord.setLastErrorType(null);
-        captureRecord.setLastFailedAt(null);
-        captureRecord.setUpdatedAt(now);
-        captureRecordService.updateById(captureRecord);
+        captureTask.setProcessStatus(firstCorpusRecord.getParseStatus());
+        captureTask.setErrorMessage(firstCorpusRecord.getErrorMessage());
+        captureTask.setModelRawResponse(firstCorpusRecord.getModelRawResponse());
+        captureTask.setRetryCount(0);
+        captureTask.setLastErrorType(null);
+        captureTask.setLastFailedAt(null);
+        captureTask.setUpdatedAt(now);
+        captureRecordService.updateById(captureTask);
     }
 
-    private void markCaptureEmpty(CaptureRecord captureRecord, VisionRecognitionResult result) {
-        if (captureRecord == null) {
+    private void markCaptureEmpty(CaptureRecord captureTask, VisionRecognitionResult recognitionResult) {
+        if (captureTask == null) {
             return;
         }
         LocalDateTime now = LocalDateTime.now();
-        captureRecord.setProcessStatus(STATUS_EMPTY_RESULT);
-        captureRecord.setErrorMessage("Vision recognition returned no visible comment items");
-        captureRecord.setModelRawResponse(result.getModelRawResponse());
-        captureRecord.setRetryCount(0);
-        captureRecord.setLastErrorType(null);
-        captureRecord.setLastFailedAt(null);
-        captureRecord.setUpdatedAt(now);
-        captureRecordService.updateById(captureRecord);
+        captureTask.setProcessStatus(STATUS_EMPTY_RESULT);
+        captureTask.setErrorMessage("Vision recognition returned no visible comment items");
+        captureTask.setModelRawResponse(recognitionResult.getModelRawResponse());
+        captureTask.setRetryCount(0);
+        captureTask.setLastErrorType(null);
+        captureTask.setLastFailedAt(null);
+        captureTask.setUpdatedAt(now);
+        captureRecordService.updateById(captureTask);
     }
 
-    private void markCaptureRetrying(CaptureRecord captureRecord,
+    private void markCaptureRetrying(CaptureRecord captureTask,
                                      CorpusProcessFailure failure,
                                      int retryCount,
                                      LocalDateTime failedAt) {
-        if (captureRecord == null) {
+        if (captureTask == null) {
             return;
         }
-        applyCaptureFailure(captureRecord, failure, retryCount, failedAt, STATUS_PROCESSING);
-        captureRecordService.updateById(captureRecord);
+        applyCaptureFailure(captureTask, failure, retryCount, failedAt, STATUS_PROCESSING);
+        captureRecordService.updateById(captureTask);
     }
 
-    private void applyCaptureFailure(CaptureRecord captureRecord,
+    private void applyCaptureFailure(CaptureRecord captureTask,
                                      CorpusProcessFailure failure,
                                      int retryCount,
                                      LocalDateTime failedAt,
                                      String status) {
-        captureRecord.setProcessStatus(status);
-        captureRecord.setErrorMessage(failure.errorMessage());
-        captureRecord.setModelRawResponse(firstText(failure.modelRawResponse(), captureRecord.getModelRawResponse()));
-        captureRecord.setRetryCount(retryCount);
-        captureRecord.setLastErrorType(failure.errorType());
-        captureRecord.setLastFailedAt(failedAt);
-        captureRecord.setUpdatedAt(failedAt);
+        captureTask.setProcessStatus(status);
+        captureTask.setErrorMessage(failure.errorMessage());
+        captureTask.setModelRawResponse(firstText(failure.modelRawResponse(), captureTask.getModelRawResponse()));
+        captureTask.setRetryCount(retryCount);
+        captureTask.setLastErrorType(failure.errorType());
+        captureTask.setLastFailedAt(failedAt);
+        captureTask.setUpdatedAt(failedAt);
     }
 
     private CorpusProcessMessage copyMessage(CorpusProcessMessage source) {
-        CorpusProcessMessage message = new CorpusProcessMessage();
-        message.setCaptureRecordId(source.getCaptureRecordId());
-        message.setRecordId(source.getRecordId());
-        message.setCaptureId(source.getCaptureId());
-        message.setImageHash(source.getImageHash());
-        message.setOssBucket(source.getOssBucket());
-        message.setOssObjectKey(source.getOssObjectKey());
-        message.setMimeType(source.getMimeType());
-        message.setForce(source.isForce());
-        return message;
+        CorpusProcessMessage processMessage = new CorpusProcessMessage();
+        processMessage.setCaptureRecordId(source.getCaptureRecordId());
+        processMessage.setRecordId(source.getRecordId());
+        processMessage.setCaptureId(source.getCaptureId());
+        processMessage.setImageHash(source.getImageHash());
+        processMessage.setOssBucket(source.getOssBucket());
+        processMessage.setOssObjectKey(source.getOssObjectKey());
+        processMessage.setMimeType(source.getMimeType());
+        processMessage.setForce(source.isForce());
+        return processMessage;
     }
 
     private String firstText(String first, String fallback) {
         return StringUtils.hasText(first) ? first : fallback;
     }
 
-    private CorpusRecord copyBase(CorpusRecord source, Integer commentIndex) {
-        CorpusRecord record = new CorpusRecord();
-        record.setCaptureId(source.getCaptureId());
-        record.setCommentIndex(commentIndex);
-        record.setCollectedTime(source.getCollectedTime());
-        record.setOssBucket(source.getOssBucket());
-        record.setOssObjectKey(source.getOssObjectKey());
-        record.setImageHash(source.getImageHash());
-        record.setCreatedAt(source.getCreatedAt());
-        record.setUpdatedAt(LocalDateTime.now());
-        record.setRetryCount(source.getRetryCount());
-        record.setLastErrorType(source.getLastErrorType());
-        record.setLastFailedAt(source.getLastFailedAt());
-        return record;
+    private CorpusRecord copyBase(CorpusRecord sourceCorpusRecord, Integer commentIndex) {
+        CorpusRecord corpusRecord = new CorpusRecord();
+        corpusRecord.setCaptureId(sourceCorpusRecord.getCaptureId());
+        corpusRecord.setCommentIndex(commentIndex);
+        corpusRecord.setCollectedTime(sourceCorpusRecord.getCollectedTime());
+        corpusRecord.setOssBucket(sourceCorpusRecord.getOssBucket());
+        corpusRecord.setOssObjectKey(sourceCorpusRecord.getOssObjectKey());
+        corpusRecord.setImageHash(sourceCorpusRecord.getImageHash());
+        corpusRecord.setCreatedAt(sourceCorpusRecord.getCreatedAt());
+        corpusRecord.setUpdatedAt(LocalDateTime.now());
+        corpusRecord.setRetryCount(sourceCorpusRecord.getRetryCount());
+        corpusRecord.setLastErrorType(sourceCorpusRecord.getLastErrorType());
+        corpusRecord.setLastFailedAt(sourceCorpusRecord.getLastFailedAt());
+        return corpusRecord;
     }
 
-    private CorpusRecord copyBase(CaptureRecord source, Integer commentIndex) {
+    private CorpusRecord copyBase(CaptureRecord sourceCaptureTask, Integer commentIndex) {
         LocalDateTime now = LocalDateTime.now();
-        CorpusRecord record = new CorpusRecord();
-        record.setCaptureId(source.getCaptureId());
-        record.setCommentIndex(commentIndex);
-        record.setCollectedTime(now);
-        record.setOssBucket(source.getOssBucket());
-        record.setOssObjectKey(source.getOssObjectKey());
-        record.setImageHash(source.getImageHash());
-        record.setCreatedAt(now);
-        record.setUpdatedAt(now);
-        record.setRetryCount(source.getRetryCount());
-        record.setLastErrorType(source.getLastErrorType());
-        record.setLastFailedAt(source.getLastFailedAt());
-        return record;
+        CorpusRecord corpusRecord = new CorpusRecord();
+        corpusRecord.setCaptureId(sourceCaptureTask.getCaptureId());
+        corpusRecord.setCommentIndex(commentIndex);
+        corpusRecord.setCollectedTime(now);
+        corpusRecord.setOssBucket(sourceCaptureTask.getOssBucket());
+        corpusRecord.setOssObjectKey(sourceCaptureTask.getOssObjectKey());
+        corpusRecord.setImageHash(sourceCaptureTask.getImageHash());
+        corpusRecord.setCreatedAt(now);
+        corpusRecord.setUpdatedAt(now);
+        corpusRecord.setRetryCount(sourceCaptureTask.getRetryCount());
+        corpusRecord.setLastErrorType(sourceCaptureTask.getLastErrorType());
+        corpusRecord.setLastFailedAt(sourceCaptureTask.getLastFailedAt());
+        return corpusRecord;
     }
 
-    private void applyRecognitionResult(CorpusRecord record, VisionRecognitionResult result) {
-        record.setPlatform(result.getPlatform());
-        record.setContextTarget(result.getContextTarget());
-        record.setOriginalPublishTime(parseOriginalPublishTime(result.getOriginalPublishTime()));
-        record.setModelRawResponse(result.getModelRawResponse());
-        record.setParseStatus(STATUS_SUCCESS);
-        record.setErrorMessage(null);
-        record.setLastErrorType(null);
-        record.setLastFailedAt(null);
+    private void applyRecognitionResult(CorpusRecord corpusRecord, VisionRecognitionResult recognitionResult) {
+        corpusRecord.setPlatform(recognitionResult.getPlatform());
+        corpusRecord.setContextTarget(recognitionResult.getContextTarget());
+        corpusRecord.setOriginalPublishTime(parseOriginalPublishTime(recognitionResult.getOriginalPublishTime()));
+        corpusRecord.setModelRawResponse(recognitionResult.getModelRawResponse());
+        corpusRecord.setParseStatus(STATUS_SUCCESS);
+        corpusRecord.setErrorMessage(null);
+        corpusRecord.setLastErrorType(null);
+        corpusRecord.setLastFailedAt(null);
     }
 
     private String toJson(List<String> values) {

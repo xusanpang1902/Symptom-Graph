@@ -32,16 +32,16 @@ public class ConfiguredVisionRecognitionService implements VisionRecognitionServ
 
     @Override
     public VisionRecognitionResult recognize(byte[] imageBytes, String mimeType) {
-        String providerName = normalize(properties.getProvider());
-        if (!StringUtils.hasText(providerName)) {
+        String configuredProviderName = normalize(properties.getProvider());
+        if (!StringUtils.hasText(configuredProviderName)) {
             throw new VisionRecognitionException(STATUS_MODEL_FAILED, "Vision provider is not configured");
         }
 
-        VisionRecognitionProvider provider = providers.get(providerName);
-        if (provider == null) {
+        VisionRecognitionProvider configuredProvider = providers.get(configuredProviderName);
+        if (configuredProvider == null) {
             throw new VisionRecognitionException(STATUS_MODEL_FAILED, "Unsupported vision provider: " + properties.getProvider());
         }
-        return provider.recognize(imageBytes, mimeType);
+        return configuredProvider.recognize(imageBytes, mimeType);
     }
 
     private String normalize(String providerName) {

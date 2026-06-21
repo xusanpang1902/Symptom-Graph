@@ -19,29 +19,29 @@ public class VisionRecognitionJsonParser {
         this.objectMapper = objectMapper;
     }
 
-    public VisionRecognitionResult parse(String modelText) {
-        String json = cleanJsonText(modelText);
+    public VisionRecognitionResult parse(String modelContentText) {
+        String recognitionJson = cleanJsonText(modelContentText);
         try {
-            VisionRecognitionResult result = objectMapper.readValue(json, VisionRecognitionResult.class);
-            if (result.getItems() == null) {
-                result.setItems(List.of());
+            VisionRecognitionResult recognitionResult = objectMapper.readValue(recognitionJson, VisionRecognitionResult.class);
+            if (recognitionResult.getItems() == null) {
+                recognitionResult.setItems(List.of());
             }
-            return result;
+            return recognitionResult;
         } catch (JsonProcessingException ex) {
-            throw new VisionRecognitionException(STATUS_PARSE_FAILED, "Vision recognition result is not valid JSON", modelText, ex);
+            throw new VisionRecognitionException(STATUS_PARSE_FAILED, "Vision recognition result is not valid JSON", modelContentText, ex);
         }
     }
 
-    String cleanJsonText(String modelText) {
-        if (modelText == null) {
+    String cleanJsonText(String modelContentText) {
+        if (modelContentText == null) {
             return "";
         }
 
-        String text = modelText.trim();
-        if (text.startsWith("```")) {
-            text = text.replaceFirst("^```(?:json|JSON)?\\s*", "");
-            text = text.replaceFirst("\\s*```$", "");
+        String cleanedJsonText = modelContentText.trim();
+        if (cleanedJsonText.startsWith("```")) {
+            cleanedJsonText = cleanedJsonText.replaceFirst("^```(?:json|JSON)?\\s*", "");
+            cleanedJsonText = cleanedJsonText.replaceFirst("\\s*```$", "");
         }
-        return text.trim();
+        return cleanedJsonText.trim();
     }
 }

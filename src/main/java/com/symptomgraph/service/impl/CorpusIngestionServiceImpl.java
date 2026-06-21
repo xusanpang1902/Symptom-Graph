@@ -90,92 +90,94 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
         validateFile(file);
         byte[] imageBytes = readBytes(file);
         String imageHash = ImageHashUtils.sha256Hex(imageBytes);
-        List<CorpusRecord> existingRecords = findExistingRecords(imageHash);
+        List<CorpusRecord> existingCorpusRecords = findExistingCorpusRecords(imageHash);
 
-        // 若已经存在记录，且不要求强行识别，则返回已有结果
-        if (!force && !existingRecords.isEmpty()) {
-            return buildResponse(existingRecords, imageHash, true, false);
+        // 已有语料且不强制重识别时，直接返回历史结果，避免重复调用 OSS 和模型。
+        if (!force && !existingCorpusRecords.isEmpty()) {
+            return buildResponse(existingCorpusRecords, imageHash, true, false);
         }
 
-        if (existingRecords.isEmpty()) {
+        if (existingCorpusRecords.isEmpty()) {
             return ingestNewImageAsync(file, imageHash, force);
         }
 
-        String captureId = existingRecords.get(0).getCaptureId();
+        // force=true 复用历史 OSS 对象，但仍同步重识别，保证“识别成功后才覆盖旧语料”的安全语义。
+        String captureBatchId = existingCorpusRecords.get(0).getCaptureId();
         String ossBucket;
         String ossObjectKey;
         boolean replacingExistingRecords = force;
-        ossBucket = existingRecords.get(0).getOssBucket();
-        ossObjectKey = existingRecords.get(0).getOssObjectKey();
+        ossBucket = existingCorpusRecords.get(0).getOssBucket();
+        ossObjectKey = existingCorpusRecords.get(0).getOssObjectKey();
 
-        List<CorpusRecord> records = recognizeAndBuildRecords(imageBytes, file.getContentType(), captureId, imageHash, ossBucket, ossObjectKey);
-        if (replacingExistingRecords && !isSuccessfulRecognition(records)) {
-            return buildResponse(records, imageHash, false, true);
+        List<CorpusRecord> recognizedCorpusRecords = recognizeAndBuildCorpusRecords(
+                imageBytes, file.getContentType(), captureBatchId, imageHash, ossBucket, ossObjectKey);
+        if (replacingExistingRecords && !isSuccessfulRecognition(recognizedCorpusRecords)) {
+            return buildResponse(recognizedCorpusRecords, imageHash, false, true);
         }
         if (replacingExistingRecords) {
             corpusRecordService.removeByImageHash(imageHash);
         }
-        corpusRecordService.saveBatch(records);
+        corpusRecordService.saveBatch(recognizedCorpusRecords);
         imageHashBloomFilterService.add(imageHash);
-        for (CorpusRecord record : records) {
-            if (STATUS_SUCCESS.equals(record.getParseStatus())) {
-                record.setMarkdownPath(markdownExportService.export(record));
+        for (CorpusRecord corpusRecord : recognizedCorpusRecords) {
+            if (STATUS_SUCCESS.equals(corpusRecord.getParseStatus())) {
+                corpusRecord.setMarkdownPath(markdownExportService.export(corpusRecord));
             }
         }
-        corpusRecordService.updateBatchById(records);
+        corpusRecordService.updateBatchById(recognizedCorpusRecords);
 
-        return buildResponse(records, imageHash, false, force);
+        return buildResponse(recognizedCorpusRecords, imageHash, false, force);
     }
 
     private CorpusUploadResponse ingestNewImageAsync(MultipartFile file, String imageHash, boolean force) {
-        String captureId = generateCaptureId();
+        String captureBatchId = generateCaptureBatchId();
 
         // 核心网络操作说明：新图只在上传请求线程中完成 OSS 原图存储，不再同步调用大模型。
         // 大模型识别属于高延迟外部网络调用，会在后续 RabbitMQ Consumer 中异步执行，从而降低上传接口 RT。
-        OssUploadResult uploadResult = ossStorageService.upload(file, captureId);
+        OssUploadResult uploadResult = ossStorageService.upload(file, captureBatchId);
 
-        CaptureRecord captureRecord = buildCaptureRecord(captureId, imageHash, uploadResult, file.getContentType(), force);
+        CaptureRecord captureTask = buildCaptureTask(captureBatchId, imageHash, uploadResult, file.getContentType(), force);
 
-        captureRecordService.save(captureRecord);
+        captureRecordService.save(captureTask);
         imageHashBloomFilterService.add(imageHash);
 
-        CorpusProcessMessage message = buildProcessMessage(captureRecord, file.getContentType(), force);
-        corpusProcessMessageProducer.send(message);
+        CorpusProcessMessage processMessage = buildProcessMessage(captureTask, file.getContentType(), force);
+        corpusProcessMessageProducer.send(processMessage);
 
-        CorpusUploadResponse response = buildAsyncResponse(captureRecord, imageHash, force);
-        response.setCaptureRecordId(captureRecord.getId());
+        CorpusUploadResponse response = buildAsyncResponse(captureTask, imageHash, force);
+        response.setCaptureRecordId(captureTask.getId());
         response.setAsyncSubmitted(true);
         return response;
     }
 
-    private List<CorpusRecord> findExistingRecords(String imageHash) {
+    private List<CorpusRecord> findExistingCorpusRecords(String imageHash) {
         if (!imageHashBloomFilterService.mightContain(imageHash)) {
             return List.of();
         }
         return corpusRecordService.listByImageHash(imageHash);
     }
 
-    private CaptureRecord buildCaptureRecord(String captureId,
-                                             String imageHash,
-                                             OssUploadResult uploadResult,
-                                             String mimeType,
-                                             boolean force) {
+    private CaptureRecord buildCaptureTask(String captureBatchId,
+                                           String imageHash,
+                                           OssUploadResult uploadResult,
+                                           String mimeType,
+                                           boolean force) {
         LocalDateTime now = LocalDateTime.now();
-        CaptureRecord record = new CaptureRecord();
-        record.setCaptureId(captureId);
-        record.setImageHash(imageHash);
-        record.setOssBucket(uploadResult.getBucket());
-        record.setOssObjectKey(uploadResult.getObjectKey());
-        record.setMimeType(mimeType);
-        record.setProvider(visionProperties.getProvider());
-        record.setModel(resolveCurrentModel());
-        record.setProcessStatus(STATUS_PROCESSING);
-        record.setRetryCount(0);
-        record.setDuplicate(false);
-        record.setForce(force);
-        record.setCreatedAt(now);
-        record.setUpdatedAt(now);
-        return record;
+        CaptureRecord captureTask = new CaptureRecord();
+        captureTask.setCaptureId(captureBatchId);
+        captureTask.setImageHash(imageHash);
+        captureTask.setOssBucket(uploadResult.getBucket());
+        captureTask.setOssObjectKey(uploadResult.getObjectKey());
+        captureTask.setMimeType(mimeType);
+        captureTask.setProvider(visionProperties.getProvider());
+        captureTask.setModel(resolveCurrentModel());
+        captureTask.setProcessStatus(STATUS_PROCESSING);
+        captureTask.setRetryCount(0);
+        captureTask.setDuplicate(false);
+        captureTask.setForce(force);
+        captureTask.setCreatedAt(now);
+        captureTask.setUpdatedAt(now);
+        return captureTask;
     }
 
     private String resolveCurrentModel() {
@@ -185,117 +187,118 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
         return geminiProperties.getModel();
     }
 
-    private CorpusProcessMessage buildProcessMessage(CaptureRecord captureRecord, String mimeType, boolean force) {
-        CorpusProcessMessage message = new CorpusProcessMessage();
-        message.setCaptureRecordId(captureRecord.getId());
-        message.setCaptureId(captureRecord.getCaptureId());
-        message.setImageHash(captureRecord.getImageHash());
-        message.setOssBucket(captureRecord.getOssBucket());
-        message.setOssObjectKey(captureRecord.getOssObjectKey());
-        message.setMimeType(mimeType);
-        message.setForce(force);
-        return message;
+    private CorpusProcessMessage buildProcessMessage(CaptureRecord captureTask, String mimeType, boolean force) {
+        CorpusProcessMessage processMessage = new CorpusProcessMessage();
+        processMessage.setCaptureRecordId(captureTask.getId());
+        processMessage.setCaptureId(captureTask.getCaptureId());
+        processMessage.setImageHash(captureTask.getImageHash());
+        processMessage.setOssBucket(captureTask.getOssBucket());
+        processMessage.setOssObjectKey(captureTask.getOssObjectKey());
+        processMessage.setMimeType(mimeType);
+        processMessage.setForce(force);
+        return processMessage;
     }
 
-    private CorpusUploadResponse buildAsyncResponse(CaptureRecord captureRecord, String imageHash, boolean force) {
+    private CorpusUploadResponse buildAsyncResponse(CaptureRecord captureTask, String imageHash, boolean force) {
         CorpusUploadResponse response = new CorpusUploadResponse();
-        response.setCaptureId(captureRecord.getCaptureId());
+        response.setCaptureId(captureTask.getCaptureId());
         response.setImageHash(imageHash);
-        response.setCaptureRecordId(captureRecord.getId());
-        response.setParseStatus(captureRecord.getProcessStatus());
+        response.setCaptureRecordId(captureTask.getId());
+        response.setParseStatus(captureTask.getProcessStatus());
         response.setDuplicate(false);
         response.setForce(force);
         return response;
     }
 
-    private List<CorpusRecord> recognizeAndBuildRecords(byte[] imageBytes,
-                                                        String mimeType,
-                                                        String captureId,
-                                                        String imageHash,
-                                                        String ossBucket,
-                                                        String ossObjectKey) {
+    private List<CorpusRecord> recognizeAndBuildCorpusRecords(byte[] imageBytes,
+                                                              String mimeType,
+                                                              String captureBatchId,
+                                                              String imageHash,
+                                                              String ossBucket,
+                                                              String ossObjectKey) {
         try {
             VisionRecognitionResult recognitionResult = visionRecognitionService.recognize(imageBytes, mimeType);
-            return buildSuccessRecords(recognitionResult, captureId, imageHash, ossBucket, ossObjectKey);
+            return buildSuccessCorpusRecords(recognitionResult, captureBatchId, imageHash, ossBucket, ossObjectKey);
         } catch (VisionRecognitionException ex) {
-            CorpusRecord failedRecord = baseRecord(captureId, 1, imageHash, ossBucket, ossObjectKey);
-            failedRecord.setParseStatus(ex.getParseStatus());
-            failedRecord.setErrorMessage(ex.getMessage());
-            failedRecord.setModelRawResponse(ex.getModelRawResponse());
-            failedRecord.setTags("[]");
-            return List.of(failedRecord);
+            CorpusRecord failedCorpusRecord = baseCorpusRecord(captureBatchId, 1, imageHash, ossBucket, ossObjectKey);
+            failedCorpusRecord.setParseStatus(ex.getParseStatus());
+            failedCorpusRecord.setErrorMessage(ex.getMessage());
+            failedCorpusRecord.setModelRawResponse(ex.getModelRawResponse());
+            failedCorpusRecord.setTags("[]");
+            return List.of(failedCorpusRecord);
         }
     }
 
-    private List<CorpusRecord> buildSuccessRecords(VisionRecognitionResult result,
-                                                   String captureId,
-                                                   String imageHash,
-                                                   String ossBucket,
-                                                   String ossObjectKey) {
-        List<VisionRecognitionItem> items = result.getItems() == null ? List.of() : result.getItems();
-        if (items.isEmpty()) {
-            CorpusRecord record = baseRecord(captureId, 1, imageHash, ossBucket, ossObjectKey);
-            applyRecognitionResult(record, result);
-            record.setTags("[]");
-            record.setParseStatus(STATUS_EMPTY_RESULT);
-            record.setErrorMessage("Vision recognition returned no visible comment items");
-            return List.of(record);
+    private List<CorpusRecord> buildSuccessCorpusRecords(VisionRecognitionResult recognitionResult,
+                                                         String captureBatchId,
+                                                         String imageHash,
+                                                         String ossBucket,
+                                                         String ossObjectKey) {
+        List<VisionRecognitionItem> recognizedItems = recognitionResult.getItems() == null ? List.of() : recognitionResult.getItems();
+        if (recognizedItems.isEmpty()) {
+            CorpusRecord emptyResultRecord = baseCorpusRecord(captureBatchId, 1, imageHash, ossBucket, ossObjectKey);
+            applyRecognitionResult(emptyResultRecord, recognitionResult);
+            emptyResultRecord.setTags("[]");
+            emptyResultRecord.setParseStatus(STATUS_EMPTY_RESULT);
+            emptyResultRecord.setErrorMessage("Vision recognition returned no visible comment items");
+            return List.of(emptyResultRecord);
         }
 
-        List<CorpusRecord> records = new ArrayList<>();
-        for (int i = 0; i < items.size(); i++) {
-            VisionRecognitionItem item = items.get(i);
-            Integer commentIndex = item.getCommentIndex() == null ? i + 1 : item.getCommentIndex();
-            CorpusRecord record = baseRecord(captureId, commentIndex, imageHash, ossBucket, ossObjectKey);
-            applyRecognitionResult(record, result);
-            record.setRawContent(item.getRawContent());
-            record.setTags(toJson(sanitizeTags(item.getTags())));
-            records.add(record);
+        List<CorpusRecord> corpusRecords = new ArrayList<>();
+        for (int i = 0; i < recognizedItems.size(); i++) {
+            VisionRecognitionItem recognizedItem = recognizedItems.get(i);
+            Integer commentIndex = recognizedItem.getCommentIndex() == null ? i + 1 : recognizedItem.getCommentIndex();
+            CorpusRecord corpusRecord = baseCorpusRecord(captureBatchId, commentIndex, imageHash, ossBucket, ossObjectKey);
+            applyRecognitionResult(corpusRecord, recognitionResult);
+            corpusRecord.setRawContent(recognizedItem.getRawContent());
+            corpusRecord.setTags(toJson(sanitizeTags(recognizedItem.getTags())));
+            corpusRecords.add(corpusRecord);
         }
-        return records;
+        return corpusRecords;
     }
 
-    private CorpusRecord baseRecord(String captureId, Integer commentIndex, String imageHash, String ossBucket, String ossObjectKey) {
+    private CorpusRecord baseCorpusRecord(String captureBatchId, Integer commentIndex, String imageHash, String ossBucket, String ossObjectKey) {
         LocalDateTime now = LocalDateTime.now();
-        CorpusRecord record = new CorpusRecord();
-        record.setCaptureId(captureId);
-        record.setCommentIndex(commentIndex);
-        record.setCollectedTime(now);
-        record.setOssBucket(ossBucket);
-        record.setOssObjectKey(ossObjectKey);
-        record.setImageHash(imageHash);
-        record.setParseStatus(STATUS_SUCCESS);
-        record.setCreatedAt(now);
-        record.setUpdatedAt(now);
-        return record;
+        CorpusRecord corpusRecord = new CorpusRecord();
+        corpusRecord.setCaptureId(captureBatchId);
+        corpusRecord.setCommentIndex(commentIndex);
+        corpusRecord.setCollectedTime(now);
+        corpusRecord.setOssBucket(ossBucket);
+        corpusRecord.setOssObjectKey(ossObjectKey);
+        corpusRecord.setImageHash(imageHash);
+        corpusRecord.setParseStatus(STATUS_SUCCESS);
+        corpusRecord.setCreatedAt(now);
+        corpusRecord.setUpdatedAt(now);
+        return corpusRecord;
     }
 
-    private void applyRecognitionResult(CorpusRecord record, VisionRecognitionResult result) {
-        record.setPlatform(result.getPlatform());
-        record.setContextTarget(result.getContextTarget());
-        record.setOriginalPublishTime(parseOriginalPublishTime(result.getOriginalPublishTime()));
-        record.setModelRawResponse(result.getModelRawResponse());
-        record.setParseStatus(STATUS_SUCCESS);
+    private void applyRecognitionResult(CorpusRecord corpusRecord, VisionRecognitionResult recognitionResult) {
+        corpusRecord.setPlatform(recognitionResult.getPlatform());
+        corpusRecord.setContextTarget(recognitionResult.getContextTarget());
+        corpusRecord.setOriginalPublishTime(parseOriginalPublishTime(recognitionResult.getOriginalPublishTime()));
+        corpusRecord.setModelRawResponse(recognitionResult.getModelRawResponse());
+        corpusRecord.setParseStatus(STATUS_SUCCESS);
     }
 
-    private CorpusUploadResponse buildResponse(List<CorpusRecord> records, String imageHash, boolean duplicate, boolean force) {
+    private CorpusUploadResponse buildResponse(List<CorpusRecord> corpusRecords, String imageHash, boolean duplicate, boolean force) {
         CorpusUploadResponse response = new CorpusUploadResponse();
         response.setImageHash(imageHash);
         response.setDuplicate(duplicate);
         response.setForce(force);
-        if (!records.isEmpty()) {
-            response.setCaptureId(records.get(0).getCaptureId());
-            response.setRecordId(records.get(0).getId());
-            response.setParseStatus(records.get(0).getParseStatus());
+        if (!corpusRecords.isEmpty()) {
+            CorpusRecord firstCorpusRecord = corpusRecords.get(0);
+            response.setCaptureId(firstCorpusRecord.getCaptureId());
+            response.setRecordId(firstCorpusRecord.getId());
+            response.setParseStatus(firstCorpusRecord.getParseStatus());
         }
-        response.setRecords(records.stream()
-                .map(record -> CorpusRecordResponse.from(record, parseTags(record.getTags())))
+        response.setRecords(corpusRecords.stream()
+                .map(corpusRecord -> CorpusRecordResponse.from(corpusRecord, parseTags(corpusRecord.getTags())))
                 .toList());
         return response;
     }
 
-    private boolean isSuccessfulRecognition(List<CorpusRecord> records) {
-        return records.stream().allMatch(record -> STATUS_SUCCESS.equals(record.getParseStatus()));
+    private boolean isSuccessfulRecognition(List<CorpusRecord> corpusRecords) {
+        return corpusRecords.stream().allMatch(corpusRecord -> STATUS_SUCCESS.equals(corpusRecord.getParseStatus()));
     }
 
     private void validateFile(MultipartFile file) {
@@ -312,7 +315,7 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
         }
     }
 
-    private String generateCaptureId() {
+    private String generateCaptureBatchId() {
         String timestamp = LocalDateTime.now().format(CAPTURE_TIME_FORMATTER);
         String suffix = UUID.randomUUID().toString().substring(0, 8);
         return timestamp + "_" + suffix;
