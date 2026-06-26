@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS capture_record (
     error_message TEXT NULL COMMENT '错误信息',
     model_raw_response JSON NULL COMMENT '多模态 Provider 原始返回',
     duplicate TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否重复截图任务',
-    force TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否强制重新识别',
+    `force` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否强制重新识别',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (id),
@@ -49,5 +49,6 @@ CREATE TABLE IF NOT EXISTS corpus_record (
     PRIMARY KEY (id),
     KEY idx_image_hash (image_hash),
     KEY idx_capture_id (capture_id),
+    KEY idx_collected_time_id (collected_time DESC, id DESC),
     UNIQUE KEY uk_capture_comment (capture_id, comment_index)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='截图语料记录';

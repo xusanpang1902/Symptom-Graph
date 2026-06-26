@@ -381,12 +381,17 @@ GET /api/v1/corpus/{id}/image-url
 
 ### Milestone 15：查询、筛选与检索能力增强
 
-- [ ] 增加按 `platform`、`parse_status`、`tag`、`capture_id`、时间范围查询。
-- [ ] 增加分页列表 API 和 Thymeleaf 管理页。
-- [ ] 增加按 `raw_content` / `context_target` 的关键词检索。
+- [x] 增加按 `platform`、`parse_status`、`tag`、`capture_id`、时间范围查询。
+- [x] 增加分页列表 API。
+- [ ] 增加 Thymeleaf 管理页。
+- [x] 增加按 `raw_content` / `context_target` 的关键词检索。
 - [ ] 后续可考虑接入 Elasticsearch 或 MySQL Full-Text，用于更大规模语料检索。
 
 建议优先级：中。该扩展能让项目从“采集链路”进一步变成“可检索资料库”。
+
+说明：Milestone 15 已新增内部只读 `GET /api/v1/corpus` 分页查询 API，查询主资源为 `corpus_record`。支持平台、解析状态、单个 JSON 精确标签、采集批次、`collected_time` 半开时间范围和正文/上下文单关键词检索；文本字段通过重复 `searchFields=rawContent&searchFields=contextTarget` 参数指定，未指定时搜索两字段。结果按 `collected_time DESC, id DESC` 返回，默认 20 条、最大 100 条，并包含精确 `total` / `totalPages`。列表返回完整正文和上下文、标签、采集时间与图片 hash；私有 OSS 图片继续通过既有单记录 signed URL 接口按需获取。已新增 MyBatis-Plus MySQL 分页拦截器、`(collected_time DESC, id DESC)` 索引、MockMvc API 测试与 Testcontainers MySQL 8 集成测试；已在 Docker Desktop 环境验证 6 个 Controller 测试和 3 个 MySQL 集成测试通过。为使 `schema.sql` 可在 MySQL 8 初始化，已将 `capture_record.force` 保留关键字列和 MyBatis-Plus 映射显式转义。由于本阶段范围聚焦可复用内部 API，Thymeleaf 管理页、认证授权、多关键词/多标签逻辑、原评论发布时间筛选及全文检索明确延后；详细契约和性能取舍记录于 `docs/milestone-15-query-design.md`，讨论与实现过程记录于 `docs/milestone-15-implementation-record.md`。
+
+跨 session 的状态、验证结果和下一步入口记录于 `docs/session-handoff.md`；该文档需在每个 session 结束时覆盖更新，里程碑与范围仍以本计划为准。
 
 ### Milestone 16：人工校对与版本追踪
 

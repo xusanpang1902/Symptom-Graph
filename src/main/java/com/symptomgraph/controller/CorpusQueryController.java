@@ -3,6 +3,10 @@ package com.symptomgraph.controller;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.symptomgraph.dto.CaptureRecordResponse;
+import com.symptomgraph.dto.CorpusPageResponse;
+import com.symptomgraph.dto.CorpusQueryPage;
+import com.symptomgraph.dto.CorpusQueryRecordResponse;
+import com.symptomgraph.dto.CorpusQueryRequest;
 import com.symptomgraph.dto.CorpusRecordResponse;
 import com.symptomgraph.entity.CaptureRecord;
 import com.symptomgraph.entity.CorpusRecord;
@@ -11,6 +15,7 @@ import com.symptomgraph.service.CorpusRecordService;
 import com.symptomgraph.service.OssStorageService;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -37,6 +42,20 @@ public class CorpusQueryController {
         this.captureRecordService = captureRecordService;
         this.ossStorageService = ossStorageService;
         this.objectMapper = objectMapper;
+    }
+
+    @GetMapping
+    public CorpusPageResponse search(@ModelAttribute CorpusQueryRequest request) {
+        CorpusQueryPage result = corpusRecordService.search(request);
+        CorpusPageResponse response = new CorpusPageResponse();
+        response.setPage(result.page());
+        response.setPageSize(result.pageSize());
+        response.setTotal(result.total());
+        response.setTotalPages(result.totalPages());
+        response.setRecords(result.records().stream()
+                .map(record -> CorpusQueryRecordResponse.from(record, parseTags(record.getTags())))
+                .toList());
+        return response;
     }
 
     @GetMapping("/{id}")

@@ -351,6 +351,9 @@ ALTER TABLE corpus_record
     ADD COLUMN retry_count INT NOT NULL DEFAULT 0 COMMENT '后台处理重试次数' AFTER error_message,
     ADD COLUMN last_error_type VARCHAR(64) NULL COMMENT '最后一次错误类型' AFTER retry_count,
     ADD COLUMN last_failed_at DATETIME NULL COMMENT '最后一次失败时间' AFTER last_error_type;
+
+ALTER TABLE corpus_record
+    ADD INDEX idx_collected_time_id (collected_time DESC, id DESC);
 ```
 
 全新数据库可直接执行 `src/main/resources/db/schema.sql`。
@@ -480,6 +483,14 @@ curl -X POST "http://localhost:8080/api/v1/corpus/upload" \
   -F "force=false"
 ```
 
+### 分页查询语料
+
+```http
+GET /api/v1/corpus?platform=小红书&tag=医疗焦虑&keyword=检测&searchFields=rawContent&searchFields=contextTarget&page=1&pageSize=20
+```
+
+支持 `platform`、`parseStatus`、单个 `tag`、`captureId`、`collectedFrom`、`collectedTo`、`keyword` 与重复的 `searchFields` 参数。时间范围为 `[collectedFrom, collectedTo)`；关键词未传 `searchFields` 时同时搜索正文与上下文。结果按采集时间和 ID 倒序分页返回，默认 20 条、最大 100 条。完整接口契约见 `docs/milestone-15-query-design.md`。
+
 ### 查询详情
 
 ```http
@@ -548,6 +559,7 @@ mvn test
 - `force=true` 重新识别失败时保留历史记录。
 - 空识别结果标记为 `EMPTY_RESULT`，不生成空语料 Markdown。
 - 查询详情、按采集批次查询和 signed URL API。
+- 内部语料分页查询 API、关键词字段范围和 MySQL JSON 标签匹配（Testcontainers MySQL 8）。
 - 模型 provider 路由。
 - Markdown 输出格式。
 - Thymeleaf 上传页和 signed URL 展示。
@@ -558,7 +570,7 @@ Milestone 8 的中文平台截图测试记录见 `docs/milestone-8-test-report.m
 
 当前 MVP 已完成截图上传、去重、私有 OSS、RabbitMQ 异步识别、任务表拆分、多模型 Provider、MySQL 入库和 Obsidian Markdown 输出。当前链路总结和详细注释见 `docs/current-chain-summary.md`，后续计划详见 `SYMPTOM_GRAPH_PLAN.md` 的“后续扩展路线”，重点方向包括：
 
-- 增强按平台、状态、标签、时间范围和关键词的查询检索。
+- 补充 Thymeleaf 查询管理页，并在数据规模增长后评估全文检索。
 - 补足至少 20 张真实中文平台截图测试集。
 - 增加人工校对、版本追踪和 Provider 识别质量统计。
 - 补充架构图、时序图和项目讲解材料。

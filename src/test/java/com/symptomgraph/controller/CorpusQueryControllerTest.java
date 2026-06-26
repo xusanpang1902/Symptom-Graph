@@ -2,6 +2,7 @@ package com.symptomgraph.controller;
 
 import com.symptomgraph.entity.CaptureRecord;
 import com.symptomgraph.entity.CorpusRecord;
+import com.symptomgraph.dto.CorpusQueryPage;
 import com.symptomgraph.service.CaptureRecordService;
 import com.symptomgraph.service.CorpusRecordService;
 import com.symptomgraph.service.OssStorageService;
@@ -12,7 +13,9 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
+import java.time.LocalDateTime;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -32,6 +35,30 @@ class CorpusQueryControllerTest {
 
     @MockBean
     private OssStorageService ossStorageService;
+
+    @Test
+    void searchReturnsPagedResearchFieldsWithoutSignedUrl() throws Exception {
+        CorpusRecord record = buildRecord(1L, 1);
+        record.setCollectedTime(LocalDateTime.of(2026, 6, 26, 10, 15, 30));
+        when(corpusRecordService.search(any())).thenReturn(new CorpusQueryPage(
+                1, 20, 1, 1, List.of(record)
+        ));
+
+        mockMvc.perform(get("/api/v1/corpus")
+                        .param("keyword", "检测")
+                        .param("searchFields", "rawContent")
+                        .param("searchFields", "contextTarget"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.page").value(1))
+                .andExpect(jsonPath("$.pageSize").value(20))
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.records[0].rawContent").value("评论原文"))
+                .andExpect(jsonPath("$.records[0].contextTarget").value("上下文原文"))
+                .andExpect(jsonPath("$.records[0].collectedTime").value("2026-06-26T10:15:30"))
+                .andExpect(jsonPath("$.records[0].imageHash").value("hash_1"))
+                .andExpect(jsonPath("$.records[0].signedUrl").doesNotExist())
+                .andExpect(jsonPath("$.records[0].modelRawResponse").doesNotExist());
+    }
 
     @Test
     void detailReturnsRecord() throws Exception {
