@@ -8,4 +8,6 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class MarkdownProperties {
 
     private String outputDir = "obsidian-output";
+
+    private String contentVersion = "model";
 }

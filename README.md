@@ -99,6 +99,12 @@ Redis Bloom Filter 默认关闭，未配置 Redis 时系统仍使用 MySQL 索�
 | `retry_count` | 后台处理重试次数 |
 | `last_error_type` | 最后一次错误类型 |
 | `last_failed_at` | 最后一次失败时间 |
+| `review_status` | 人工校对状态，`UNREVIEWED`、`REVIEWED`、`CORRECTED` |
+| `reviewed_raw_content` | 人工修正后的评论原文 |
+| `reviewed_context_target` | 人工修正后的上下文原文 |
+| `reviewed_tags` | 人工修正后的标签数组 |
+| `reviewed_at` | 人工校对时间 |
+| `review_note` | 人工校对备注 |
 | `markdown_path` | Markdown 文件路径 |
 | `created_at` / `updated_at` | 创建和更新时间 |
 
@@ -158,6 +164,8 @@ Markdown 文件不会保存 signed URL，避免链接过期后污染长期研究
 
 - `image_hash`
 - `oss_object_key`
+
+默认 Markdown 输出模型识别版本。可通过 `MARKDOWN_CONTENT_VERSION=reviewed` 或 `app.markdown.content-version=reviewed` 切换为人工校对版本输出：当语料 `review_status=CORRECTED` 时，Markdown 使用 `reviewed_raw_content`、`reviewed_context_target` 和 `reviewed_tags`；其他状态仍回退到模型版本。Front Matter 会写入 `review_status` 和 `content_version`。
 
 这两个字段用于追溯原始截图证据链。
 
@@ -491,6 +499,27 @@ GET /api/v1/corpus?platform=小红书&tag=医疗焦虑&keyword=检测&searchFiel
 
 支持 `platform`、`parseStatus`、单个 `tag`、`captureId`、`collectedFrom`、`collectedTo`、`keyword` 与重复的 `searchFields` 参数。时间范围为 `[collectedFrom, collectedTo)`；关键词未传 `searchFields` 时同时搜索正文与上下文。结果按采集时间和 ID 倒序分页返回，默认 20 条、最大 100 条。完整接口契约见 `docs/milestone-15-query-design.md`。
 
+### 人工校对语料
+
+```http
+PATCH /api/v1/corpus/{id}/review
+Content-Type: application/json
+```
+
+示例：
+
+```json
+{
+  "reviewStatus": "CORRECTED",
+  "reviewedRawContent": "人工修正后的评论原文",
+  "reviewedContextTarget": "人工修正后的上下文原文",
+  "reviewedTags": ["医疗焦虑", "恐艾"],
+  "reviewNote": "已按原截图校对"
+}
+```
+
+校对接口不会覆盖模型原始字段 `raw_content`、`context_target`、`tags` 和 `model_raw_response`，只写入独立人工校对字段。`REVIEWED` 表示确认模型结果可用；`CORRECTED` 至少需要提交一个人工修订字段；`UNREVIEWED` 会清空人工校对字段并回到未校对状态。
+
 ### 查询详情
 
 ```http
@@ -560,6 +589,7 @@ mvn test
 - 空识别结果标记为 `EMPTY_RESULT`，不生成空语料 Markdown。
 - 查询详情、按采集批次查询和 signed URL API。
 - 内部语料分页查询 API、关键词字段范围和 MySQL JSON 标签匹配（Testcontainers MySQL 8）。
+- 人工校对 API、校对状态流转、标签清洗和 Markdown 人工版本输出。
 - 模型 provider 路由。
 - Markdown 输出格式。
 - Thymeleaf 上传页和 signed URL 展示。
@@ -568,11 +598,11 @@ Milestone 8 的中文平台截图测试记录见 `docs/milestone-8-test-report.m
 
 ## 后续路线
 
-当前 MVP 已完成截图上传、去重、私有 OSS、RabbitMQ 异步识别、任务表拆分、多模型 Provider、MySQL 入库和 Obsidian Markdown 输出。当前链路总结和详细注释见 `docs/current-chain-summary.md`，后续计划详见 `SYMPTOM_GRAPH_PLAN.md` 的“后续扩展路线”，重点方向包括：
+当前 MVP 已完成截图上传、去重、私有 OSS、RabbitMQ 异步识别、任务表拆分、多模型 Provider、MySQL 入库、Obsidian Markdown 输出、分页查询管理页和人工校对初版能力。当前链路总结和详细注释见 `docs/current-chain-summary.md`，项目完整度总览见 `docs/project-completeness-summary.md`，后续计划详见 `SYMPTOM_GRAPH_PLAN.md` 的“后续扩展路线”，重点方向包括：
 
-- 补充 Thymeleaf 查询管理页，并在数据规模增长后评估全文检索。
+- 在数据规模增长后评估全文检索。
 - 补足至少 20 张真实中文平台截图测试集。
-- 增加人工校对、版本追踪和 Provider 识别质量统计。
+- 增强人工校对审计历史，并增加 Provider 识别质量统计。
 - 补充架构图、时序图和项目讲解材料。
 
 前端异步轮询已完成：新图上传返回 `PROCESSING` 后，页面会自动请求 `GET /api/v1/corpus/capture-records/{id}` 查询任务状态；任务成功后再请求 `GET /api/v1/corpus/captures/{captureId}` 并刷新最终识别结果。

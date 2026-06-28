@@ -22,6 +22,8 @@
 -> 成功时写入一条或多条 corpus_record
 -> 为 SUCCESS 语料生成 Obsidian Markdown
 -> 更新 capture_record 为 SUCCESS / EMPTY_RESULT / MODEL_FAILED / PARSE_FAILED
+-> /corpus/manage 查询、筛选和预览语料
+-> PATCH /api/v1/corpus/{id}/review 保存人工校对版本
 ```
 
 注释：当前系统已经不是“上传接口同步调用大模型”的 MVP。新图上传只负责创建任务和投递 MQ，真正的大模型识别在后台 Consumer 中完成。
@@ -188,6 +190,58 @@ image_hash 已存在
 - 每条评论通过 `comment_index` 区分。
 - `raw_content` 和 `context_target` 必须来自截图可见文字，不能补写或编造。
 - 数据库中的 tags 不带 `#`。
+- 模型原始字段不被人工校对覆盖。
+- 人工校对版本写入 `reviewed_raw_content`、`reviewed_context_target`、`reviewed_tags` 等独立字段。
+- `review_status` 区分 `UNREVIEWED`、`REVIEWED`、`CORRECTED`。
+
+## 4.3 查询管理与人工校对链路
+
+页面入口：
+
+```http
+GET /corpus/manage
+```
+
+查询 API：
+
+```http
+GET /api/v1/corpus
+```
+
+人工校对 API：
+
+```http
+PATCH /api/v1/corpus/{id}/review
+Content-Type: application/json
+```
+
+链路说明：
+
+```text
+/corpus/manage 输入筛选条件
+-> fetch GET /api/v1/corpus
+-> 展示 corpus_record 列表、模型原始正文、上下文、tags、review_status
+-> 用户点击“校对”
+-> 页面提交 PATCH /api/v1/corpus/{id}/review
+-> CorpusRecordService.review 校验状态与字段
+-> 清洗 reviewedTags，去掉 # / ＃、空值和重复项
+-> 只更新人工校对字段，不覆盖 raw_content / context_target / tags / model_raw_response
+-> 页面刷新当前查询结果
+```
+
+状态语义：
+
+| 状态 | 注释 |
+| --- | --- |
+| `UNREVIEWED` | 尚未人工校对；人工校对字段为空 |
+| `REVIEWED` | 人工确认模型结果可用；可保存备注 |
+| `CORRECTED` | 人工修正过正文、上下文或标签；至少一个人工修订字段有值 |
+
+Markdown 版本选择：
+
+- 默认 `MARKDOWN_CONTENT_VERSION=model`，继续输出模型识别版本。
+- 配置 `MARKDOWN_CONTENT_VERSION=reviewed` 后，`CORRECTED` 记录输出人工校对版本。
+- Front Matter 会记录 `review_status` 和 `content_version`。
 
 ## 5. Consumer 后台识别链路
 
@@ -366,13 +420,15 @@ POST /api/v1/corpus/{id}/retry
 
 | 接口 | 返回 | 注释 |
 | --- | --- | --- |
+| `GET /api/v1/corpus` | `CorpusPageResponse` | 分页查询语料，支持平台、状态、标签、采集批次、时间范围和关键词检索 |
 | `GET /api/v1/corpus/{id}` | `CorpusRecordResponse` | 查询单条语料详情 |
 | `GET /api/v1/corpus/captures/{captureId}` | `List<CorpusRecordResponse>` | 查询同一截图下的所有评论语料 |
 | `GET /api/v1/corpus/capture-records/{id}` | `CaptureRecordResponse` | 查询截图采集任务状态 |
 | `GET /api/v1/corpus/{id}/image-url` | signed URL | 根据语料记录生成临时 OSS 访问链接 |
+| `PATCH /api/v1/corpus/{id}/review` | `CorpusRecordResponse` | 保存人工校对状态和人工修订版本 |
 | `POST /api/v1/corpus/capture-records/{id}/retry` | `CaptureRecordResponse` | 重试失败任务 |
 
-注释：当前还没有 Milestone 15 的分页、筛选、关键词检索和管理页。
+注释：`/corpus/manage` 复用 `GET /api/v1/corpus` 做查询管理，并按需调用 signed URL 与人工校对接口。
 
 ## 10. Markdown 输出链路
 
@@ -422,8 +478,9 @@ Consumer
 - 至少 20 张真实中文平台截图测试仍待补足，不能伪造测试结果。
 - `force=true` 处理已有图片时仍为同步重识别链路，用于保留“成功后才覆盖旧语料”的安全语义。
 - 旧 `POST /api/v1/corpus/{id}/retry` 和旧 `recordId` 消息兼容逻辑仍保留，用于历史失败记录和历史 MQ 消息。
-- Milestone 15 的分页、筛选、关键词检索和管理页尚未实现。
-- 当前还没有一批多图上传和人工校对流程。
+- Milestone 15 的分页、筛选、关键词检索和 Thymeleaf 管理页已完成初版。
+- Milestone 16 的人工校对流程已完成初版，但只保存最新人工修订版本，不保存每次修订历史。
+- 当前还没有一批多图上传、认证授权、任务级模型选择、Provider 质量统计或全文检索。
 
 ## 13. 后续开发提醒
 
@@ -434,5 +491,7 @@ Consumer
 - retry queue / DLQ。
 - `capture_record` / `corpus_record` 双表拆分。
 - 前端 `capture_record` 状态轮询。
+- `GET /api/v1/corpus` 分页查询和 `/corpus/manage` 管理页。
+- `PATCH /api/v1/corpus/{id}/review` 人工校对初版。
 
-建议下一阶段从 Milestone 15 开始做查询、筛选、分页和管理页。
+建议下一阶段优先从 Milestone 17 的 Provider 与模型治理、Milestone 12 的真实截图质量评估或 Milestone 18 的展示材料中选择一个方向推进。

@@ -90,10 +90,11 @@ capture_record.process_status = EMPTY_RESULT
 随着 `capture_record` 和 `corpus_record` 双表稳定，后续应把项目从“采集链路”扩展为“可管理资料库”：
 
 - 增加任务列表页，按 `process_status`、`image_hash`、`capture_id`、时间范围筛选。
-- 增加语料列表页，按 `platform`、`tag`、`raw_content`、`context_target` 检索。
-- 增加人工校对流程，保存模型原始识别结果和人工修订结果。
-- 增加校对状态，例如 `UNREVIEWED`、`REVIEWED`、`CORRECTED`。
-- Markdown 输出可选择使用模型版本或人工校对版本，但必须保留原始证据链。
+- 语料列表页已完成初版，支持按 `platform`、`tag`、`raw_content`、`context_target` 检索；后续可增强保存筛选条件、批量操作和标签建议。
+- 人工校对流程已采用方案 B 完成初版，保存模型原始识别结果和最新人工修订结果。
+- 校对状态 `UNREVIEWED`、`REVIEWED`、`CORRECTED` 已完成初版。
+- Markdown 已支持模型版本 / 人工校对版本可选输出，并保留原始证据链。
+- 未来如需审计每次修订，可新增 `corpus_review_revision` 表；当前只保存最新人工校对版本。
 
 ## 6. Provider 与模型治理
 

@@ -21,6 +21,10 @@ public class CorpusProcessMessage {
 
     private String mimeType;
 
+    private String provider;
+
+    private String model;
+
     private boolean force;
 
     private int retryCount;

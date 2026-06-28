@@ -47,6 +47,18 @@ public class CorpusRecord {
 
     private LocalDateTime lastFailedAt;
 
+    private String reviewStatus;
+
+    private String reviewedRawContent;
+
+    private String reviewedContextTarget;
+
+    private String reviewedTags;
+
+    private LocalDateTime reviewedAt;
+
+    private String reviewNote;
+
     private String markdownPath;
 
     private LocalDateTime createdAt;

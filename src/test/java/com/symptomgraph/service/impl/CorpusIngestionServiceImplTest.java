@@ -9,6 +9,7 @@ import com.symptomgraph.dto.CorpusRecordResponse;
 import com.symptomgraph.dto.CorpusUploadResponse;
 import com.symptomgraph.dto.OssUploadResult;
 import com.symptomgraph.dto.VisionRecognitionItem;
+import com.symptomgraph.dto.VisionRecognitionOptions;
 import com.symptomgraph.dto.VisionRecognitionResult;
 import com.symptomgraph.entity.CaptureRecord;
 import com.symptomgraph.entity.CorpusRecord;
@@ -17,6 +18,7 @@ import com.symptomgraph.service.CorpusRecordService;
 import com.symptomgraph.service.ImageHashBloomFilterService;
 import com.symptomgraph.service.MarkdownExportService;
 import com.symptomgraph.service.OssStorageService;
+import com.symptomgraph.service.RecognitionRunService;
 import com.symptomgraph.service.VisionRecognitionService;
 import com.symptomgraph.util.ImageHashUtils;
 import com.symptomgraph.exception.VisionRecognitionException;
@@ -60,6 +62,9 @@ class CorpusIngestionServiceImplTest {
     private VisionRecognitionService visionRecognitionService;
 
     @Mock
+    private RecognitionRunService recognitionRunService;
+
+    @Mock
     private MarkdownExportService markdownExportService;
 
     @Mock
@@ -75,6 +80,7 @@ class CorpusIngestionServiceImplTest {
                 imageHashBloomFilterService,
                 ossStorageService,
                 visionRecognitionService,
+                recognitionRunService,
                 markdownExportService,
                 corpusProcessMessageProducer,
                 new VisionProperties(),
@@ -179,7 +185,7 @@ class CorpusIngestionServiceImplTest {
         when(imageHashBloomFilterService.mightContain(imageHash)).thenReturn(true);
         when(corpusRecordService.listByImageHash(imageHash)).thenReturn(List.of(existingRecord));
         when(corpusRecordService.removeByImageHash(imageHash)).thenReturn(true);
-        when(visionRecognitionService.recognize(any(byte[].class), eq("image/png"))).thenReturn(recognitionResult);
+        when(visionRecognitionService.recognize(any(byte[].class), eq("image/png"), any(VisionRecognitionOptions.class))).thenReturn(recognitionResult);
         when(corpusRecordService.saveBatch(any(Collection.class))).thenAnswer(invocation -> {
             Collection<CorpusRecord> records = invocation.getArgument(0);
             records.forEach(record -> record.setId(200L));
@@ -211,7 +217,7 @@ class CorpusIngestionServiceImplTest {
 
         when(imageHashBloomFilterService.mightContain(imageHash)).thenReturn(true);
         when(corpusRecordService.listByImageHash(imageHash)).thenReturn(List.of(existingRecord));
-        when(visionRecognitionService.recognize(any(byte[].class), eq("image/png")))
+        when(visionRecognitionService.recognize(any(byte[].class), eq("image/png"), any(VisionRecognitionOptions.class)))
                 .thenThrow(new VisionRecognitionException("MODEL_FAILED", "model failed"));
 
         CorpusUploadResponse response = service.ingest(file, true);

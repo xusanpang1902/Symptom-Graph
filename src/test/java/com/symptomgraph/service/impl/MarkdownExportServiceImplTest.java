@@ -32,6 +32,8 @@ class MarkdownExportServiceImplTest {
         String markdown = Files.readString(Path.of(markdownPath));
         assertThat(markdown).contains("tags:\n  - \"医疗焦虑\"\n  - \"恐艾\"");
         assertThat(markdown).contains("obsidian_tags:\n  - \"#医疗焦虑\"\n  - \"#恐艾\"");
+        assertThat(markdown).contains("review_status: \"UNREVIEWED\"");
+        assertThat(markdown).contains("content_version: \"model\"");
         assertThat(markdown).contains("oss_object_key: \"corpus/2026/05/test.png\"");
         assertThat(markdown).contains("- oss_object_key: `corpus/2026/05/test.png`");
         assertThat(markdown).doesNotContain("http://");
@@ -64,6 +66,29 @@ class MarkdownExportServiceImplTest {
         String markdownPath = service.export(record);
 
         assertThat(Path.of(markdownPath).getFileName().toString()).isEqualTo("capture_bad_name-1-小红书_非法.md");
+    }
+
+    @Test
+    void exportCanUseReviewedContentWhenConfigured() throws IOException {
+        MarkdownProperties properties = properties();
+        properties.setContentVersion("reviewed");
+        MarkdownExportServiceImpl service = new MarkdownExportServiceImpl(properties, new ObjectMapper());
+        CorpusRecord record = buildRecord();
+        record.setTags("[\"模型标签\"]");
+        record.setReviewStatus("CORRECTED");
+        record.setReviewedRawContent("人工修正评论");
+        record.setReviewedContextTarget("人工修正上下文");
+        record.setReviewedTags("[\"人工标签\"]");
+
+        String markdownPath = service.export(record);
+
+        String markdown = Files.readString(Path.of(markdownPath));
+        assertThat(markdown).contains("review_status: \"CORRECTED\"");
+        assertThat(markdown).contains("content_version: \"reviewed\"");
+        assertThat(markdown).contains("> 人工修正评论");
+        assertThat(markdown).contains("> 人工修正上下文");
+        assertThat(markdown).contains("tags:\n  - \"人工标签\"");
+        assertThat(markdown).doesNotContain("> 截图中提取出的评论原文");
     }
 
     private MarkdownProperties properties() {

@@ -8,6 +8,7 @@ import com.symptomgraph.dto.CorpusQueryPage;
 import com.symptomgraph.dto.CorpusQueryRecordResponse;
 import com.symptomgraph.dto.CorpusQueryRequest;
 import com.symptomgraph.dto.CorpusRecordResponse;
+import com.symptomgraph.dto.CorpusReviewRequest;
 import com.symptomgraph.entity.CaptureRecord;
 import com.symptomgraph.entity.CorpusRecord;
 import com.symptomgraph.service.CaptureRecordService;
@@ -16,8 +17,10 @@ import com.symptomgraph.service.OssStorageService;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -53,7 +56,7 @@ public class CorpusQueryController {
         response.setTotal(result.total());
         response.setTotalPages(result.totalPages());
         response.setRecords(result.records().stream()
-                .map(record -> CorpusQueryRecordResponse.from(record, parseTags(record.getTags())))
+                .map(record -> CorpusQueryRecordResponse.from(record, parseTags(record.getTags()), parseTags(record.getReviewedTags())))
                 .toList());
         return response;
     }
@@ -72,6 +75,11 @@ public class CorpusQueryController {
         return corpusRecordService.listByCaptureId(captureId).stream()
                 .map(this::toResponse)
                 .toList();
+    }
+
+    @PatchMapping("/{id}/review")
+    public CorpusRecordResponse review(@PathVariable Long id, @RequestBody CorpusReviewRequest request) {
+        return toResponse(corpusRecordService.review(id, request));
     }
 
     @GetMapping("/capture-records/{id}")
@@ -93,7 +101,7 @@ public class CorpusQueryController {
     }
 
     private CorpusRecordResponse toResponse(CorpusRecord record) {
-        return CorpusRecordResponse.from(record, parseTags(record.getTags()));
+        return CorpusRecordResponse.from(record, parseTags(record.getTags()), parseTags(record.getReviewedTags()));
     }
 
     private List<String> parseTags(String tagsJson) {

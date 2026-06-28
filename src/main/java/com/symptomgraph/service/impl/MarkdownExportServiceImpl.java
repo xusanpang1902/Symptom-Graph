@@ -44,7 +44,8 @@ public class MarkdownExportServiceImpl implements MarkdownExportService {
     }
 
     private String buildMarkdownContent(CorpusRecord corpusRecord) {
-        List<String> databaseTags = parseTags(corpusRecord.getTags());
+        MarkdownContentVersion contentVersion = resolveContentVersion(corpusRecord);
+        List<String> databaseTags = contentVersion.tags();
         StringBuilder markdownContent = new StringBuilder();
 
         // Markdown 是长期研究资料，只写稳定证据链字段，不写会过期的 signed URL。
@@ -65,12 +66,14 @@ public class MarkdownExportServiceImpl implements MarkdownExportService {
         }
         markdownContent.append("image_hash: \"").append(escapeYaml(corpusRecord.getImageHash())).append("\"\n");
         markdownContent.append("oss_object_key: \"").append(escapeYaml(corpusRecord.getOssObjectKey())).append("\"\n");
+        markdownContent.append("review_status: \"").append(escapeYaml(reviewStatus(corpusRecord))).append("\"\n");
+        markdownContent.append("content_version: \"").append(contentVersion.version()).append("\"\n");
         markdownContent.append("---\n\n");
         markdownContent.append("# ").append(valueOrUnknown(corpusRecord.getPlatform())).append("语料 ").append(corpusRecord.getId()).append("\n\n");
         markdownContent.append("## 原始评论\n\n");
-        markdownContent.append("> ").append(valueOrEmpty(corpusRecord.getRawContent()).replace("\n", "\n> ")).append("\n\n");
+        markdownContent.append("> ").append(valueOrEmpty(contentVersion.rawContent()).replace("\n", "\n> ")).append("\n\n");
         markdownContent.append("## 上下文原文\n\n");
-        markdownContent.append("> ").append(valueOrEmpty(corpusRecord.getContextTarget()).replace("\n", "\n> ")).append("\n\n");
+        markdownContent.append("> ").append(valueOrEmpty(contentVersion.contextTarget()).replace("\n", "\n> ")).append("\n\n");
         markdownContent.append("## 证据链\n\n");
         markdownContent.append("- image_hash: `").append(valueOrEmpty(corpusRecord.getImageHash())).append("`\n");
         markdownContent.append("- oss_object_key: `").append(valueOrEmpty(corpusRecord.getOssObjectKey())).append("`\n\n");
@@ -88,6 +91,28 @@ public class MarkdownExportServiceImpl implements MarkdownExportService {
         } catch (IOException ex) {
             return List.of();
         }
+    }
+
+    private MarkdownContentVersion resolveContentVersion(CorpusRecord corpusRecord) {
+        List<String> modelTags = parseTags(corpusRecord.getTags());
+        if (!"reviewed".equalsIgnoreCase(properties.getContentVersion())
+                || !"CORRECTED".equals(reviewStatus(corpusRecord))) {
+            return new MarkdownContentVersion("model", corpusRecord.getRawContent(), corpusRecord.getContextTarget(), modelTags);
+        }
+
+        List<String> reviewedTags = StringUtils.hasText(corpusRecord.getReviewedTags())
+                ? parseTags(corpusRecord.getReviewedTags())
+                : modelTags;
+        return new MarkdownContentVersion(
+                "reviewed",
+                StringUtils.hasText(corpusRecord.getReviewedRawContent()) ? corpusRecord.getReviewedRawContent() : corpusRecord.getRawContent(),
+                StringUtils.hasText(corpusRecord.getReviewedContextTarget()) ? corpusRecord.getReviewedContextTarget() : corpusRecord.getContextTarget(),
+                reviewedTags
+        );
+    }
+
+    private String reviewStatus(CorpusRecord corpusRecord) {
+        return StringUtils.hasText(corpusRecord.getReviewStatus()) ? corpusRecord.getReviewStatus() : "UNREVIEWED";
     }
 
     private String buildMarkdownFilename(CorpusRecord corpusRecord) {
@@ -118,5 +143,8 @@ public class MarkdownExportServiceImpl implements MarkdownExportService {
 
     private String valueOrEmpty(String value) {
         return value == null ? "" : value;
+    }
+
+    private record MarkdownContentVersion(String version, String rawContent, String contextTarget, List<String> tags) {
     }
 }

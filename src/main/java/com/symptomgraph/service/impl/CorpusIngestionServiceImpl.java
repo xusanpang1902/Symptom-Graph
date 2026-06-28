@@ -11,9 +11,11 @@ import com.symptomgraph.dto.CorpusRecordResponse;
 import com.symptomgraph.dto.CorpusUploadResponse;
 import com.symptomgraph.dto.OssUploadResult;
 import com.symptomgraph.dto.VisionRecognitionItem;
+import com.symptomgraph.dto.VisionRecognitionOptions;
 import com.symptomgraph.dto.VisionRecognitionResult;
 import com.symptomgraph.entity.CaptureRecord;
 import com.symptomgraph.entity.CorpusRecord;
+import com.symptomgraph.entity.RecognitionRun;
 import com.symptomgraph.exception.VisionRecognitionException;
 import com.symptomgraph.mq.CorpusProcessMessageProducer;
 import com.symptomgraph.service.CaptureRecordService;
@@ -22,6 +24,7 @@ import com.symptomgraph.service.CorpusRecordService;
 import com.symptomgraph.service.ImageHashBloomFilterService;
 import com.symptomgraph.service.MarkdownExportService;
 import com.symptomgraph.service.OssStorageService;
+import com.symptomgraph.service.RecognitionRunService;
 import com.symptomgraph.service.VisionRecognitionService;
 import com.symptomgraph.util.ImageHashUtils;
 import org.springframework.stereotype.Service;
@@ -30,6 +33,7 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -52,6 +56,7 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
     private final ImageHashBloomFilterService imageHashBloomFilterService;
     private final OssStorageService ossStorageService;
     private final VisionRecognitionService visionRecognitionService;
+    private final RecognitionRunService recognitionRunService;
     private final MarkdownExportService markdownExportService;
     private final CorpusProcessMessageProducer corpusProcessMessageProducer;
     private final VisionProperties visionProperties;
@@ -65,6 +70,7 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
                                       ImageHashBloomFilterService imageHashBloomFilterService,
                                       OssStorageService ossStorageService,
                                       VisionRecognitionService visionRecognitionService,
+                                      RecognitionRunService recognitionRunService,
                                       MarkdownExportService markdownExportService,
                                       CorpusProcessMessageProducer corpusProcessMessageProducer,
                                       VisionProperties visionProperties,
@@ -76,6 +82,7 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
         this.imageHashBloomFilterService = imageHashBloomFilterService;
         this.ossStorageService = ossStorageService;
         this.visionRecognitionService = visionRecognitionService;
+        this.recognitionRunService = recognitionRunService;
         this.markdownExportService = markdownExportService;
         this.corpusProcessMessageProducer = corpusProcessMessageProducer;
         this.visionProperties = visionProperties;
@@ -87,9 +94,17 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
     @Override
     @Transactional
     public CorpusUploadResponse ingest(MultipartFile file, boolean force) {
+        return ingest(file, force, null, null);
+    }
+
+    @Override
+    @Transactional
+    public CorpusUploadResponse ingest(MultipartFile file, boolean force, String provider, String model) {
         validateFile(file);
         byte[] imageBytes = readBytes(file);
         String imageHash = ImageHashUtils.sha256Hex(imageBytes);
+        String requestedProvider = resolveRequestedProvider(provider);
+        String requestedModel = resolveRequestedModel(requestedProvider, model);
         List<CorpusRecord> existingCorpusRecords = findExistingCorpusRecords(imageHash);
 
         // 已有语料且不强制重识别时，直接返回历史结果，避免重复调用 OSS 和模型。
@@ -98,7 +113,7 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
         }
 
         if (existingCorpusRecords.isEmpty()) {
-            return ingestNewImageAsync(file, imageHash, force);
+            return ingestNewImageAsync(file, imageHash, force, requestedProvider, requestedModel);
         }
 
         // force=true 复用历史 OSS 对象，但仍同步重识别，保证“识别成功后才覆盖旧语料”的安全语义。
@@ -110,7 +125,8 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
         ossObjectKey = existingCorpusRecords.get(0).getOssObjectKey();
 
         List<CorpusRecord> recognizedCorpusRecords = recognizeAndBuildCorpusRecords(
-                imageBytes, file.getContentType(), captureBatchId, imageHash, ossBucket, ossObjectKey);
+                imageBytes, file.getContentType(), captureBatchId, imageHash, ossBucket, ossObjectKey,
+                requestedProvider, requestedModel);
         if (replacingExistingRecords && !isSuccessfulRecognition(recognizedCorpusRecords)) {
             return buildResponse(recognizedCorpusRecords, imageHash, false, true);
         }
@@ -126,17 +142,24 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
         }
         corpusRecordService.updateBatchById(recognizedCorpusRecords);
 
-        return buildResponse(recognizedCorpusRecords, imageHash, false, force);
+        CorpusUploadResponse response = buildResponse(recognizedCorpusRecords, imageHash, false, force);
+        response.setProvider(requestedProvider);
+        response.setModel(requestedModel);
+        return response;
     }
 
-    private CorpusUploadResponse ingestNewImageAsync(MultipartFile file, String imageHash, boolean force) {
+    private CorpusUploadResponse ingestNewImageAsync(MultipartFile file,
+                                                     String imageHash,
+                                                     boolean force,
+                                                     String provider,
+                                                     String model) {
         String captureBatchId = generateCaptureBatchId();
 
         // 核心网络操作说明：新图只在上传请求线程中完成 OSS 原图存储，不再同步调用大模型。
         // 大模型识别属于高延迟外部网络调用，会在后续 RabbitMQ Consumer 中异步执行，从而降低上传接口 RT。
         OssUploadResult uploadResult = ossStorageService.upload(file, captureBatchId);
 
-        CaptureRecord captureTask = buildCaptureTask(captureBatchId, imageHash, uploadResult, file.getContentType(), force);
+        CaptureRecord captureTask = buildCaptureTask(captureBatchId, imageHash, uploadResult, file.getContentType(), force, provider, model);
 
         captureRecordService.save(captureTask);
         imageHashBloomFilterService.add(imageHash);
@@ -161,7 +184,9 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
                                            String imageHash,
                                            OssUploadResult uploadResult,
                                            String mimeType,
-                                           boolean force) {
+                                           boolean force,
+                                           String provider,
+                                           String model) {
         LocalDateTime now = LocalDateTime.now();
         CaptureRecord captureTask = new CaptureRecord();
         captureTask.setCaptureId(captureBatchId);
@@ -169,8 +194,8 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
         captureTask.setOssBucket(uploadResult.getBucket());
         captureTask.setOssObjectKey(uploadResult.getObjectKey());
         captureTask.setMimeType(mimeType);
-        captureTask.setProvider(visionProperties.getProvider());
-        captureTask.setModel(resolveCurrentModel());
+        captureTask.setProvider(provider);
+        captureTask.setModel(model);
         captureTask.setProcessStatus(STATUS_PROCESSING);
         captureTask.setRetryCount(0);
         captureTask.setDuplicate(false);
@@ -187,6 +212,26 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
         return geminiProperties.getModel();
     }
 
+    private String resolveRequestedProvider(String provider) {
+        if (StringUtils.hasText(provider)) {
+            return provider.trim();
+        }
+        return visionProperties.getProvider();
+    }
+
+    private String resolveRequestedModel(String provider, String model) {
+        if (StringUtils.hasText(model)) {
+            return model.trim();
+        }
+        if ("openrouter".equalsIgnoreCase(provider)) {
+            return openRouterProperties.getModel();
+        }
+        if ("gemini".equalsIgnoreCase(provider)) {
+            return geminiProperties.getModel();
+        }
+        return resolveCurrentModel();
+    }
+
     private CorpusProcessMessage buildProcessMessage(CaptureRecord captureTask, String mimeType, boolean force) {
         CorpusProcessMessage processMessage = new CorpusProcessMessage();
         processMessage.setCaptureRecordId(captureTask.getId());
@@ -195,6 +240,8 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
         processMessage.setOssBucket(captureTask.getOssBucket());
         processMessage.setOssObjectKey(captureTask.getOssObjectKey());
         processMessage.setMimeType(mimeType);
+        processMessage.setProvider(captureTask.getProvider());
+        processMessage.setModel(captureTask.getModel());
         processMessage.setForce(force);
         return processMessage;
     }
@@ -205,6 +252,8 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
         response.setImageHash(imageHash);
         response.setCaptureRecordId(captureTask.getId());
         response.setParseStatus(captureTask.getProcessStatus());
+        response.setProvider(captureTask.getProvider());
+        response.setModel(captureTask.getModel());
         response.setDuplicate(false);
         response.setForce(force);
         return response;
@@ -215,18 +264,65 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
                                                               String captureBatchId,
                                                               String imageHash,
                                                               String ossBucket,
-                                                              String ossObjectKey) {
+                                                              String ossObjectKey,
+                                                              String provider,
+                                                              String model) {
+        RecognitionRun recognitionRun = startRecognitionRun(null, captureBatchId, imageHash, provider, model);
         try {
-            VisionRecognitionResult recognitionResult = visionRecognitionService.recognize(imageBytes, mimeType);
-            return buildSuccessCorpusRecords(recognitionResult, captureBatchId, imageHash, ossBucket, ossObjectKey);
+            VisionRecognitionResult recognitionResult = visionRecognitionService.recognize(
+                    imageBytes, mimeType, VisionRecognitionOptions.of(provider, model));
+            List<CorpusRecord> records = buildSuccessCorpusRecords(recognitionResult, captureBatchId, imageHash, ossBucket, ossObjectKey);
+            finishRecognitionRun(recognitionRun, records.get(0).getParseStatus(), records.size(),
+                    records.get(0).getModelRawResponse(), null, null);
+            return records;
         } catch (VisionRecognitionException ex) {
             CorpusRecord failedCorpusRecord = baseCorpusRecord(captureBatchId, 1, imageHash, ossBucket, ossObjectKey);
             failedCorpusRecord.setParseStatus(ex.getParseStatus());
             failedCorpusRecord.setErrorMessage(ex.getMessage());
             failedCorpusRecord.setModelRawResponse(ex.getModelRawResponse());
             failedCorpusRecord.setTags("[]");
+            finishRecognitionRun(recognitionRun, ex.getParseStatus(), 0, ex.getModelRawResponse(), ex.getParseStatus(), ex.getMessage());
             return List.of(failedCorpusRecord);
         }
+    }
+
+    private RecognitionRun startRecognitionRun(Long captureRecordId,
+                                               String captureBatchId,
+                                               String imageHash,
+                                               String provider,
+                                               String model) {
+        LocalDateTime now = LocalDateTime.now();
+        RecognitionRun recognitionRun = new RecognitionRun();
+        recognitionRun.setCaptureRecordId(captureRecordId);
+        recognitionRun.setCaptureId(captureBatchId);
+        recognitionRun.setImageHash(imageHash);
+        recognitionRun.setProvider(provider);
+        recognitionRun.setModel(model);
+        recognitionRun.setStatus(STATUS_PROCESSING);
+        recognitionRun.setItemCount(0);
+        recognitionRun.setStartedAt(now);
+        recognitionRun.setCreatedAt(now);
+        recognitionRun.setUpdatedAt(now);
+        recognitionRunService.save(recognitionRun);
+        return recognitionRun;
+    }
+
+    private void finishRecognitionRun(RecognitionRun recognitionRun,
+                                      String status,
+                                      int itemCount,
+                                      String modelRawResponse,
+                                      String errorType,
+                                      String errorMessage) {
+        LocalDateTime finishedAt = LocalDateTime.now();
+        recognitionRun.setStatus(status);
+        recognitionRun.setItemCount(itemCount);
+        recognitionRun.setFinishedAt(finishedAt);
+        recognitionRun.setDurationMs(Duration.between(recognitionRun.getStartedAt(), finishedAt).toMillis());
+        recognitionRun.setModelRawResponse(modelRawResponse);
+        recognitionRun.setErrorType(errorType);
+        recognitionRun.setErrorMessage(errorMessage);
+        recognitionRun.setUpdatedAt(finishedAt);
+        recognitionRunService.updateById(recognitionRun);
     }
 
     private List<CorpusRecord> buildSuccessCorpusRecords(VisionRecognitionResult recognitionResult,

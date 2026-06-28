@@ -18,6 +18,10 @@ public class CorpusUploadResponse {
 
     private String parseStatus;
 
+    private String provider;
+
+    private String model;
+
     private boolean duplicate;
 
     private boolean force;

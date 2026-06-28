@@ -1,11 +1,14 @@
 package com.symptomgraph.controller;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.symptomgraph.entity.CaptureRecord;
 import com.symptomgraph.entity.CorpusRecord;
 import com.symptomgraph.dto.CorpusQueryPage;
+import com.symptomgraph.dto.CorpusReviewRequest;
 import com.symptomgraph.service.CaptureRecordService;
 import com.symptomgraph.service.CorpusRecordService;
 import com.symptomgraph.service.OssStorageService;
+import org.springframework.http.MediaType;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -16,8 +19,10 @@ import java.util.List;
 import java.time.LocalDateTime;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -26,6 +31,9 @@ class CorpusQueryControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @MockBean
     private CaptureRecordService captureRecordService;
@@ -56,6 +64,7 @@ class CorpusQueryControllerTest {
                 .andExpect(jsonPath("$.records[0].contextTarget").value("上下文原文"))
                 .andExpect(jsonPath("$.records[0].collectedTime").value("2026-06-26T10:15:30"))
                 .andExpect(jsonPath("$.records[0].imageHash").value("hash_1"))
+                .andExpect(jsonPath("$.records[0].reviewStatus").value("UNREVIEWED"))
                 .andExpect(jsonPath("$.records[0].signedUrl").doesNotExist())
                 .andExpect(jsonPath("$.records[0].modelRawResponse").doesNotExist());
     }
@@ -69,7 +78,37 @@ class CorpusQueryControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(1))
                 .andExpect(jsonPath("$.platform").value("小红书"))
-                .andExpect(jsonPath("$.tags[0]").value("医疗焦虑"));
+                .andExpect(jsonPath("$.tags[0]").value("医疗焦虑"))
+                .andExpect(jsonPath("$.reviewStatus").value("UNREVIEWED"));
+    }
+
+    @Test
+    void reviewUpdatesRecordAndReturnsReviewedFields() throws Exception {
+        CorpusReviewRequest request = new CorpusReviewRequest();
+        request.setReviewStatus("CORRECTED");
+        request.setReviewedRawContent("人工修正评论");
+        request.setReviewedContextTarget("人工修正上下文");
+        request.setReviewedTags(List.of("医疗焦虑"));
+        request.setReviewNote("已核对截图");
+
+        CorpusRecord reviewedRecord = buildRecord(1L, 1);
+        reviewedRecord.setReviewStatus("CORRECTED");
+        reviewedRecord.setReviewedRawContent("人工修正评论");
+        reviewedRecord.setReviewedContextTarget("人工修正上下文");
+        reviewedRecord.setReviewedTags("[\"医疗焦虑\"]");
+        reviewedRecord.setReviewNote("已核对截图");
+        when(corpusRecordService.review(eq(1L), any(CorpusReviewRequest.class))).thenReturn(reviewedRecord);
+
+        mockMvc.perform(patch("/api/v1/corpus/1/review")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reviewStatus").value("CORRECTED"))
+                .andExpect(jsonPath("$.reviewedRawContent").value("人工修正评论"))
+                .andExpect(jsonPath("$.reviewedContextTarget").value("人工修正上下文"))
+                .andExpect(jsonPath("$.reviewedTags[0]").value("医疗焦虑"))
+                .andExpect(jsonPath("$.reviewNote").value("已核对截图"))
+                .andExpect(jsonPath("$.rawContent").value("评论原文"));
     }
 
     @Test

@@ -6,13 +6,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.symptomgraph.config.CorpusRabbitMqProperties;
 import com.symptomgraph.dto.CorpusProcessMessage;
 import com.symptomgraph.dto.VisionRecognitionItem;
+import com.symptomgraph.dto.VisionRecognitionOptions;
 import com.symptomgraph.dto.VisionRecognitionResult;
 import com.symptomgraph.entity.CaptureRecord;
 import com.symptomgraph.entity.CorpusRecord;
+import com.symptomgraph.entity.RecognitionRun;
 import com.symptomgraph.service.CaptureRecordService;
 import com.symptomgraph.service.CorpusRecordService;
 import com.symptomgraph.service.MarkdownExportService;
 import com.symptomgraph.service.OssStorageService;
+import com.symptomgraph.service.RecognitionRunService;
 import com.symptomgraph.service.VisionRecognitionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -42,6 +46,7 @@ public class CorpusProcessMessageListener {
     private final CaptureRecordService captureRecordService;
     private final CorpusRecordService corpusRecordService;
     private final OssStorageService ossStorageService;
+    private final RecognitionRunService recognitionRunService;
     private final VisionRecognitionService visionRecognitionService;
     private final MarkdownExportService markdownExportService;
     private final CorpusProcessMessageProducer corpusProcessMessageProducer;
@@ -52,6 +57,7 @@ public class CorpusProcessMessageListener {
     public CorpusProcessMessageListener(CaptureRecordService captureRecordService,
                                         CorpusRecordService corpusRecordService,
                                         OssStorageService ossStorageService,
+                                        RecognitionRunService recognitionRunService,
                                         VisionRecognitionService visionRecognitionService,
                                         MarkdownExportService markdownExportService,
                                         CorpusProcessMessageProducer corpusProcessMessageProducer,
@@ -61,6 +67,7 @@ public class CorpusProcessMessageListener {
         this.captureRecordService = captureRecordService;
         this.corpusRecordService = corpusRecordService;
         this.ossStorageService = ossStorageService;
+        this.recognitionRunService = recognitionRunService;
         this.visionRecognitionService = visionRecognitionService;
         this.markdownExportService = markdownExportService;
         this.corpusProcessMessageProducer = corpusProcessMessageProducer;
@@ -80,14 +87,19 @@ public class CorpusProcessMessageListener {
             return;
         }
 
+        RecognitionRun recognitionRun = startRecognitionRun(captureTask, processMessage);
         try {
             // 核心网络操作说明：Consumer 在后台线程从私有 OSS 下载原图字节，再调用统一的 VisionRecognitionService。
             // 这里不关心当前 provider 是 Gemini 还是 OpenRouter，从而保留 Milestone 9 已完成的 Provider 策略模式。
             byte[] imageBytes = ossStorageService.download(processMessage.getOssObjectKey());
-            VisionRecognitionResult recognitionResult = visionRecognitionService.recognize(imageBytes, processMessage.getMimeType());
+            VisionRecognitionResult recognitionResult = visionRecognitionService.recognize(
+                    imageBytes,
+                    processMessage.getMimeType(),
+                    VisionRecognitionOptions.of(recognitionRun.getProvider(), recognitionRun.getModel()));
             List<CorpusRecord> recognizedCorpusRecords = buildRecognitionCorpusRecords(
                     captureTask, legacyProcessingCorpusRecord, recognitionResult);
             if (recognizedCorpusRecords.isEmpty()) {
+                finishRecognitionRun(recognitionRun, STATUS_EMPTY_RESULT, 0, recognitionResult.getModelRawResponse(), null, null);
                 markCaptureEmpty(captureTask, recognitionResult);
                 return;
             }
@@ -95,10 +107,63 @@ public class CorpusProcessMessageListener {
             // 数据库状态流转说明：新链路由 capture_record 承载任务状态，corpus_record 只保存识别出的语料。
             // 为兼容旧消息，如果消息仍携带 recordId，则第一条评论继续复用旧 PROCESSING 占位记录。
             persistRecognitionCorpusRecords(legacyProcessingCorpusRecord, recognizedCorpusRecords);
+            finishRecognitionRun(recognitionRun, recognizedCorpusRecords.get(0).getParseStatus(),
+                    recognizedCorpusRecords.size(), recognizedCorpusRecords.get(0).getModelRawResponse(), null, null);
             markCaptureCompleted(captureTask, recognizedCorpusRecords.get(0));
         } catch (RuntimeException ex) {
-            handleFailure(captureTask, legacyProcessingCorpusRecord, processMessage, failureClassifier.classify(ex));
+            CorpusProcessFailure failure = failureClassifier.classify(ex);
+            finishRecognitionRun(recognitionRun,
+                    StringUtils.hasText(failure.parseStatus()) ? failure.parseStatus() : STATUS_PARSE_FAILED,
+                    0,
+                    failure.modelRawResponse(),
+                    failure.errorType(),
+                    failure.errorMessage());
+            handleFailure(captureTask, legacyProcessingCorpusRecord, processMessage, failure);
         }
+    }
+
+    private RecognitionRun startRecognitionRun(CaptureRecord captureTask, CorpusProcessMessage processMessage) {
+        LocalDateTime now = LocalDateTime.now();
+        RecognitionRun recognitionRun = new RecognitionRun();
+        recognitionRun.setCaptureRecordId(captureTask == null ? processMessage.getCaptureRecordId() : captureTask.getId());
+        recognitionRun.setCaptureId(firstText(captureTask == null ? null : captureTask.getCaptureId(), processMessage.getCaptureId()));
+        recognitionRun.setImageHash(firstText(captureTask == null ? null : captureTask.getImageHash(), processMessage.getImageHash()));
+        recognitionRun.setProvider(resolveProvider(captureTask, processMessage));
+        recognitionRun.setModel(resolveModel(captureTask, processMessage));
+        recognitionRun.setStatus(STATUS_PROCESSING);
+        recognitionRun.setItemCount(0);
+        recognitionRun.setStartedAt(now);
+        recognitionRun.setCreatedAt(now);
+        recognitionRun.setUpdatedAt(now);
+        recognitionRunService.save(recognitionRun);
+        return recognitionRun;
+    }
+
+    private void finishRecognitionRun(RecognitionRun recognitionRun,
+                                      String status,
+                                      int itemCount,
+                                      String modelRawResponse,
+                                      String errorType,
+                                      String errorMessage) {
+        LocalDateTime finishedAt = LocalDateTime.now();
+        recognitionRun.setStatus(status);
+        recognitionRun.setItemCount(itemCount);
+        recognitionRun.setFinishedAt(finishedAt);
+        recognitionRun.setDurationMs(Duration.between(recognitionRun.getStartedAt(), finishedAt).toMillis());
+        recognitionRun.setModelRawResponse(modelRawResponse);
+        recognitionRun.setErrorType(errorType);
+        recognitionRun.setErrorMessage(errorMessage);
+        recognitionRun.setUpdatedAt(finishedAt);
+        recognitionRunService.updateById(recognitionRun);
+    }
+
+    private String resolveProvider(CaptureRecord captureTask, CorpusProcessMessage processMessage) {
+        String provider = firstText(processMessage.getProvider(), captureTask == null ? null : captureTask.getProvider());
+        return StringUtils.hasText(provider) ? provider : "default";
+    }
+
+    private String resolveModel(CaptureRecord captureTask, CorpusProcessMessage processMessage) {
+        return firstText(processMessage.getModel(), captureTask == null ? null : captureTask.getModel());
     }
 
     private CorpusRecord resolveLegacyProcessingCorpusRecord(CorpusProcessMessage processMessage) {
@@ -314,6 +379,8 @@ public class CorpusProcessMessageListener {
         processMessage.setOssBucket(source.getOssBucket());
         processMessage.setOssObjectKey(source.getOssObjectKey());
         processMessage.setMimeType(source.getMimeType());
+        processMessage.setProvider(source.getProvider());
+        processMessage.setModel(source.getModel());
         processMessage.setForce(source.isForce());
         return processMessage;
     }

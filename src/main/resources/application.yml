@@ -58,6 +58,7 @@ app:
     title: ${OPENROUTER_TITLE:Symptom-Graph}
   markdown:
     output-dir: ${OBSIDIAN_OUTPUT_DIR:obsidian-output}
+    content-version: ${MARKDOWN_CONTENT_VERSION:model}
   bloom:
     enabled: ${BLOOM_FILTER_ENABLED:false}
     name: ${BLOOM_FILTER_NAME:symptom_graph_hash_bloom}

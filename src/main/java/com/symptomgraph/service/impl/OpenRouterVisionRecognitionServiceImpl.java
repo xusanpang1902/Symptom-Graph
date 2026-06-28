@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.symptomgraph.config.OpenRouterProperties;
+import com.symptomgraph.dto.VisionRecognitionOptions;
 import com.symptomgraph.dto.VisionRecognitionResult;
 import com.symptomgraph.exception.VisionRecognitionException;
 import com.symptomgraph.service.VisionRecognitionProvider;
@@ -54,6 +55,11 @@ public class OpenRouterVisionRecognitionServiceImpl implements VisionRecognition
 
     @Override
     public VisionRecognitionResult recognize(byte[] imageBytes, String mimeType) {
+        return recognize(imageBytes, mimeType, null);
+    }
+
+    @Override
+    public VisionRecognitionResult recognize(byte[] imageBytes, String mimeType, VisionRecognitionOptions options) {
         // 在发起远程模型调用前先校验本地前置条件，避免无效请求进入外部服务。
         // OpenRouter 只是 Provider 适配层，错误状态仍收敛到采集链路统一理解的 MODEL_FAILED。
         if (imageBytes == null || imageBytes.length == 0) {
@@ -66,7 +72,7 @@ public class OpenRouterVisionRecognitionServiceImpl implements VisionRecognition
             throw new VisionRecognitionException(STATUS_MODEL_FAILED, "OpenRouter API key is not configured");
         }
 
-        String providerResponseBody = callOpenRouter(imageBytes, mimeType);
+        String providerResponseBody = callOpenRouter(imageBytes, mimeType, resolveModel(options));
         String modelContentText = extractMessageContent(providerResponseBody);
         VisionRecognitionResult recognitionResult;
         try {
@@ -79,8 +85,8 @@ public class OpenRouterVisionRecognitionServiceImpl implements VisionRecognition
         return recognitionResult;
     }
 
-    private String callOpenRouter(byte[] imageBytes, String mimeType) {
-        Map<String, Object> requestBody = buildRequestBody(imageBytes, mimeType);
+    private String callOpenRouter(byte[] imageBytes, String mimeType, String model) {
+        Map<String, Object> requestBody = buildRequestBody(imageBytes, mimeType, model);
         try {
             // OpenRouter 兼容 OpenAI Chat Completions 协议，请求地址、鉴权头和可选站点信息
             // 都集中在本类中处理，避免泄漏到上层采集链路。
@@ -108,12 +114,23 @@ public class OpenRouterVisionRecognitionServiceImpl implements VisionRecognition
         }
     }
 
+    private String resolveModel(VisionRecognitionOptions options) {
+        if (options != null && StringUtils.hasText(options.getModel())) {
+            return options.getModel();
+        }
+        return properties.getModel();
+    }
+
     private Map<String, Object> buildRequestBody(byte[] imageBytes, String mimeType) {
+        return buildRequestBody(imageBytes, mimeType, properties.getModel());
+    }
+
+    private Map<String, Object> buildRequestBody(byte[] imageBytes, String mimeType, String model) {
         // OpenRouter 的图片输入使用 image_url content type。本地图片需要编码成 data URL，
         // 而不是 Gemini 那种 inline_data/mime_type/data 三字段结构。
         String dataUrl = "data:" + mimeType + ";base64," + Base64.getEncoder().encodeToString(imageBytes);
         return Map.of(
-                "model", properties.getModel(),
+                "model", model,
                 "messages", List.of(Map.of(
                         "role", "user",
                         "content", List.of(

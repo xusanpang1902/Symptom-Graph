@@ -3,6 +3,7 @@ package com.symptomgraph.service;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.symptomgraph.dto.CorpusQueryPage;
 import com.symptomgraph.dto.CorpusQueryRequest;
+import com.symptomgraph.dto.CorpusReviewRequest;
 import com.symptomgraph.entity.CorpusRecord;
 
 import java.util.List;
@@ -18,6 +19,8 @@ public interface CorpusRecordService extends IService<CorpusRecord> {
     List<CorpusRecord> listByCaptureId(String captureId);
 
     CorpusQueryPage search(CorpusQueryRequest request);
+
+    CorpusRecord review(Long id, CorpusReviewRequest request);
 
     boolean removeByImageHash(String imageHash);
 }

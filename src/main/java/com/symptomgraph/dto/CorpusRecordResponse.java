@@ -3,6 +3,7 @@ package com.symptomgraph.dto;
 import com.symptomgraph.entity.CorpusRecord;
 import lombok.Data;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Data
@@ -30,7 +31,23 @@ public class CorpusRecordResponse {
 
     private String markdownPath;
 
+    private String reviewStatus;
+
+    private String reviewedRawContent;
+
+    private String reviewedContextTarget;
+
+    private List<String> reviewedTags;
+
+    private LocalDateTime reviewedAt;
+
+    private String reviewNote;
+
     public static CorpusRecordResponse from(CorpusRecord record, List<String> tags) {
+        return from(record, tags, List.of());
+    }
+
+    public static CorpusRecordResponse from(CorpusRecord record, List<String> tags, List<String> reviewedTags) {
         CorpusRecordResponse response = new CorpusRecordResponse();
         response.setId(record.getId());
         response.setCaptureId(record.getCaptureId());
@@ -43,6 +60,12 @@ public class CorpusRecordResponse {
         response.setParseStatus(record.getParseStatus());
         response.setErrorMessage(record.getErrorMessage());
         response.setMarkdownPath(record.getMarkdownPath());
+        response.setReviewStatus(record.getReviewStatus() == null ? "UNREVIEWED" : record.getReviewStatus());
+        response.setReviewedRawContent(record.getReviewedRawContent());
+        response.setReviewedContextTarget(record.getReviewedContextTarget());
+        response.setReviewedTags(reviewedTags);
+        response.setReviewedAt(record.getReviewedAt());
+        response.setReviewNote(record.getReviewNote());
         return response;
     }
 }

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.symptomgraph.config.GeminiProperties;
+import com.symptomgraph.dto.VisionRecognitionOptions;
 import com.symptomgraph.dto.VisionRecognitionResult;
 import com.symptomgraph.exception.GeminiRecognitionException;
 import com.symptomgraph.exception.VisionRecognitionException;
@@ -57,6 +58,11 @@ public class GeminiVisionServiceImpl implements GeminiVisionService {
 
     @Override
     public VisionRecognitionResult recognize(byte[] imageBytes, String mimeType) {
+        return recognize(imageBytes, mimeType, null);
+    }
+
+    @Override
+    public VisionRecognitionResult recognize(byte[] imageBytes, String mimeType, VisionRecognitionOptions options) {
         // 在发起远程模型调用前先校验本地前置条件，避免无效请求进入外部服务。
         // 这些错误统一归类为模型阶段失败，便于采集链路复用同一套重试和失败处理逻辑。
         if (imageBytes == null || imageBytes.length == 0) {
@@ -69,7 +75,7 @@ public class GeminiVisionServiceImpl implements GeminiVisionService {
             throw new GeminiRecognitionException(STATUS_MODEL_FAILED, "Gemini API key is not configured");
         }
 
-        String providerResponseBody = callGemini(imageBytes, mimeType);
+        String providerResponseBody = callGemini(imageBytes, mimeType, resolveModel(options));
         String modelContentText = extractCandidateText(providerResponseBody);
         VisionRecognitionResult recognitionResult;
         try {
@@ -83,14 +89,14 @@ public class GeminiVisionServiceImpl implements GeminiVisionService {
         return recognitionResult;
     }
 
-    private String callGemini(byte[] imageBytes, String mimeType) {
+    private String callGemini(byte[] imageBytes, String mimeType, String model) {
         Map<String, Object> requestBody = buildRequestBody(imageBytes, mimeType);
 
         try {
             // Gemini 的 API key 通过 query 参数传递，因此 URL 拼装集中在
             // buildGenerateContentUrl() 中处理。
             String providerResponseBody = restClient.post()
-                    .uri(buildGenerateContentUrl())
+                    .uri(buildGenerateContentUrl(model))
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(requestBody)
                     .retrieve()
@@ -110,6 +116,13 @@ public class GeminiVisionServiceImpl implements GeminiVisionService {
         } catch (RestClientException ex) {
             throw new GeminiRecognitionException(STATUS_MODEL_FAILED, "Gemini API request failed", ex);
         }
+    }
+
+    private String resolveModel(VisionRecognitionOptions options) {
+        if (options != null && StringUtils.hasText(options.getModel())) {
+            return options.getModel();
+        }
+        return properties.getModel();
     }
 
     private Map<String, Object> buildRequestBody(byte[] imageBytes, String mimeType) {
@@ -135,12 +148,16 @@ public class GeminiVisionServiceImpl implements GeminiVisionService {
     }
 
     private String buildGenerateContentUrl() {
+        return buildGenerateContentUrl(properties.getModel());
+    }
+
+    private String buildGenerateContentUrl(String model) {
         String endpoint = properties.getEndpoint();
         if (endpoint.endsWith("/")) {
             endpoint = endpoint.substring(0, endpoint.length() - 1);
         }
         String apiKey = UriUtils.encodeQueryParam(properties.getApiKey(), StandardCharsets.UTF_8);
-        return endpoint + "/models/" + properties.getModel() + ":generateContent?key=" + apiKey;
+        return endpoint + "/models/" + model + ":generateContent?key=" + apiKey;
     }
 
     String extractCandidateText(String providerResponseBody) {

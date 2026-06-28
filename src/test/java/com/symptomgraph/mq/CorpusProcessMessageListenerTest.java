@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.symptomgraph.config.CorpusRabbitMqProperties;
 import com.symptomgraph.dto.CorpusProcessMessage;
 import com.symptomgraph.dto.VisionRecognitionItem;
+import com.symptomgraph.dto.VisionRecognitionOptions;
 import com.symptomgraph.dto.VisionRecognitionResult;
 import com.symptomgraph.entity.CaptureRecord;
 import com.symptomgraph.entity.CorpusRecord;
@@ -12,6 +13,7 @@ import com.symptomgraph.service.CaptureRecordService;
 import com.symptomgraph.service.CorpusRecordService;
 import com.symptomgraph.service.MarkdownExportService;
 import com.symptomgraph.service.OssStorageService;
+import com.symptomgraph.service.RecognitionRunService;
 import com.symptomgraph.service.VisionRecognitionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -44,6 +46,9 @@ class CorpusProcessMessageListenerTest {
     private OssStorageService ossStorageService;
 
     @Mock
+    private RecognitionRunService recognitionRunService;
+
+    @Mock
     private VisionRecognitionService visionRecognitionService;
 
     @Mock
@@ -60,6 +65,7 @@ class CorpusProcessMessageListenerTest {
                 captureRecordService,
                 corpusRecordService,
                 ossStorageService,
+                recognitionRunService,
                 visionRecognitionService,
                 markdownExportService,
                 corpusProcessMessageProducer,
@@ -91,7 +97,7 @@ class CorpusProcessMessageListenerTest {
         when(corpusRecordService.getById(10L)).thenReturn(processingRecord);
         when(captureRecordService.getById(100L)).thenReturn(captureRecord);
         when(ossStorageService.download("corpus/test.png")).thenReturn("image".getBytes());
-        when(visionRecognitionService.recognize(any(byte[].class), eq("image/png"))).thenReturn(result);
+        when(visionRecognitionService.recognize(any(byte[].class), eq("image/png"), any(VisionRecognitionOptions.class))).thenReturn(result);
         when(corpusRecordService.saveBatch(any(Collection.class))).thenAnswer(invocation -> {
             Collection<CorpusRecord> records = invocation.getArgument(0);
             records.forEach(record -> record.setId(20L));
@@ -149,7 +155,7 @@ class CorpusProcessMessageListenerTest {
 
         when(captureRecordService.getById(100L)).thenReturn(captureRecord);
         when(ossStorageService.download("corpus/test.png")).thenReturn("image".getBytes());
-        when(visionRecognitionService.recognize(any(byte[].class), eq("image/png"))).thenReturn(result);
+        when(visionRecognitionService.recognize(any(byte[].class), eq("image/png"), any(VisionRecognitionOptions.class))).thenReturn(result);
         when(corpusRecordService.saveBatch(any(Collection.class))).thenAnswer(invocation -> {
             Collection<CorpusRecord> records = invocation.getArgument(0);
             records.forEach(record -> record.setId(30L));
@@ -189,7 +195,7 @@ class CorpusProcessMessageListenerTest {
 
         when(captureRecordService.getById(100L)).thenReturn(captureRecord);
         when(ossStorageService.download("corpus/test.png")).thenReturn("image".getBytes());
-        when(visionRecognitionService.recognize(any(byte[].class), eq("image/png"))).thenReturn(result);
+        when(visionRecognitionService.recognize(any(byte[].class), eq("image/png"), any(VisionRecognitionOptions.class))).thenReturn(result);
 
         listener.handle(message);
 
@@ -213,7 +219,7 @@ class CorpusProcessMessageListenerTest {
         when(corpusRecordService.getById(10L)).thenReturn(processingRecord);
         when(captureRecordService.getById(100L)).thenReturn(captureRecord);
         when(ossStorageService.download("corpus/test.png")).thenReturn("image".getBytes());
-        when(visionRecognitionService.recognize(any(byte[].class), eq("image/png"))).thenReturn(result);
+        when(visionRecognitionService.recognize(any(byte[].class), eq("image/png"), any(VisionRecognitionOptions.class))).thenReturn(result);
 
         listener.handle(message);
 
@@ -244,7 +250,7 @@ class CorpusProcessMessageListenerTest {
         when(corpusRecordService.getById(10L)).thenReturn(processingRecord);
         when(captureRecordService.getById(100L)).thenReturn(captureRecord);
         when(ossStorageService.download("corpus/test.png")).thenReturn("image".getBytes());
-        when(visionRecognitionService.recognize(any(byte[].class), eq("image/png")))
+        when(visionRecognitionService.recognize(any(byte[].class), eq("image/png"), any(VisionRecognitionOptions.class)))
                 .thenThrow(new VisionRecognitionException("MODEL_FAILED", "model failed", "{\"error\":true}", null));
 
         listener.handle(message);
@@ -281,7 +287,7 @@ class CorpusProcessMessageListenerTest {
         when(corpusRecordService.getById(10L)).thenReturn(processingRecord);
         when(captureRecordService.getById(100L)).thenReturn(captureRecord);
         when(ossStorageService.download("corpus/test.png")).thenReturn("image".getBytes());
-        when(visionRecognitionService.recognize(any(byte[].class), eq("image/png")))
+        when(visionRecognitionService.recognize(any(byte[].class), eq("image/png"), any(VisionRecognitionOptions.class)))
                 .thenThrow(new VisionRecognitionException("MODEL_FAILED", "model failed", "{\"error\":true}", null));
 
         listener.handle(message);
@@ -309,7 +315,7 @@ class CorpusProcessMessageListenerTest {
         when(corpusRecordService.getById(10L)).thenReturn(processingRecord);
         when(captureRecordService.getById(100L)).thenReturn(captureRecord);
         when(ossStorageService.download("corpus/test.png")).thenReturn("image".getBytes());
-        when(visionRecognitionService.recognize(any(byte[].class), eq("image/png")))
+        when(visionRecognitionService.recognize(any(byte[].class), eq("image/png"), any(VisionRecognitionOptions.class)))
                 .thenThrow(new VisionRecognitionException("PARSE_FAILED", "parse failed", "{\"bad\":true}", null));
 
         listener.handle(message);

@@ -19,8 +19,18 @@ public class CorpusQueryRecordResponse {
     private String parseStatus;
     private LocalDateTime collectedTime;
     private String imageHash;
+    private String reviewStatus;
+    private String reviewedRawContent;
+    private String reviewedContextTarget;
+    private List<String> reviewedTags;
+    private LocalDateTime reviewedAt;
+    private String reviewNote;
 
     public static CorpusQueryRecordResponse from(CorpusRecord record, List<String> tags) {
+        return from(record, tags, List.of());
+    }
+
+    public static CorpusQueryRecordResponse from(CorpusRecord record, List<String> tags, List<String> reviewedTags) {
         CorpusQueryRecordResponse response = new CorpusQueryRecordResponse();
         response.setId(record.getId());
         response.setCaptureId(record.getCaptureId());
@@ -32,6 +42,12 @@ public class CorpusQueryRecordResponse {
         response.setParseStatus(record.getParseStatus());
         response.setCollectedTime(record.getCollectedTime());
         response.setImageHash(record.getImageHash());
+        response.setReviewStatus(record.getReviewStatus() == null ? "UNREVIEWED" : record.getReviewStatus());
+        response.setReviewedRawContent(record.getReviewedRawContent());
+        response.setReviewedContextTarget(record.getReviewedContextTarget());
+        response.setReviewedTags(reviewedTags);
+        response.setReviewedAt(record.getReviewedAt());
+        response.setReviewNote(record.getReviewNote());
         return response;
     }
 }

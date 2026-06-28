@@ -1,9 +1,12 @@
 package com.symptomgraph.service.impl;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.symptomgraph.dto.CorpusQueryPage;
 import com.symptomgraph.dto.CorpusQueryRequest;
+import com.symptomgraph.dto.CorpusReviewRequest;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.symptomgraph.entity.CorpusRecord;
 import com.symptomgraph.mapper.CorpusRecordMapper;
@@ -28,6 +31,18 @@ public class CorpusRecordServiceImpl extends ServiceImpl<CorpusRecordMapper, Cor
     private static final Set<String> SUPPORTED_PARSE_STATUSES = Set.of(
             "SUCCESS", "PROCESSING", "EMPTY_RESULT", "MODEL_FAILED", "PARSE_FAILED"
     );
+    private static final String REVIEW_STATUS_UNREVIEWED = "UNREVIEWED";
+    private static final String REVIEW_STATUS_REVIEWED = "REVIEWED";
+    private static final String REVIEW_STATUS_CORRECTED = "CORRECTED";
+    private static final Set<String> SUPPORTED_REVIEW_STATUSES = Set.of(
+            REVIEW_STATUS_UNREVIEWED, REVIEW_STATUS_REVIEWED, REVIEW_STATUS_CORRECTED
+    );
+
+    private final ObjectMapper objectMapper;
+
+    public CorpusRecordServiceImpl(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+    }
 
     @Override
     public List<CorpusRecord> listByImageHash(String imageHash) {
@@ -102,6 +117,75 @@ public class CorpusRecordServiceImpl extends ServiceImpl<CorpusRecordMapper, Cor
                 .remove();
     }
 
+    @Override
+    public CorpusRecord review(Long id, CorpusReviewRequest request) {
+        CorpusRecord record = getById(id);
+        if (record == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Corpus record not found");
+        }
+        if (request == null) {
+            throw badRequest("Review request is required");
+        }
+
+        String reviewStatus = normalizeText(request.getReviewStatus());
+        if (!StringUtils.hasText(reviewStatus)) {
+            throw badRequest("reviewStatus is required");
+        }
+        if (!SUPPORTED_REVIEW_STATUSES.contains(reviewStatus)) {
+            throw badRequest("Unsupported reviewStatus: " + reviewStatus);
+        }
+
+        applyReview(record, request, reviewStatus);
+        persistReviewFields(record);
+        return record;
+    }
+
+    private void persistReviewFields(CorpusRecord record) {
+        lambdaUpdate()
+                .eq(CorpusRecord::getId, record.getId())
+                .set(CorpusRecord::getReviewStatus, record.getReviewStatus())
+                .set(CorpusRecord::getReviewedRawContent, record.getReviewedRawContent())
+                .set(CorpusRecord::getReviewedContextTarget, record.getReviewedContextTarget())
+                .set(CorpusRecord::getReviewedTags, record.getReviewedTags())
+                .set(CorpusRecord::getReviewedAt, record.getReviewedAt())
+                .set(CorpusRecord::getReviewNote, record.getReviewNote())
+                .update();
+    }
+
+    private void applyReview(CorpusRecord record, CorpusReviewRequest request, String reviewStatus) {
+        record.setReviewStatus(reviewStatus);
+        record.setReviewedAt(LocalDateTime.now());
+
+        if (REVIEW_STATUS_UNREVIEWED.equals(reviewStatus)) {
+            record.setReviewedRawContent(null);
+            record.setReviewedContextTarget(null);
+            record.setReviewedTags(null);
+            record.setReviewNote(null);
+            record.setReviewedAt(null);
+            return;
+        }
+
+        if (REVIEW_STATUS_REVIEWED.equals(reviewStatus)) {
+            record.setReviewedRawContent(null);
+            record.setReviewedContextTarget(null);
+            record.setReviewedTags(null);
+            record.setReviewNote(normalizeText(request.getReviewNote()));
+            return;
+        }
+
+        String reviewedRawContent = normalizeText(request.getReviewedRawContent());
+        String reviewedContextTarget = normalizeText(request.getReviewedContextTarget());
+        boolean tagsProvided = request.getReviewedTags() != null;
+        if (!StringUtils.hasText(reviewedRawContent) && !StringUtils.hasText(reviewedContextTarget) && !tagsProvided) {
+            throw badRequest("CORRECTED review requires at least one reviewed field");
+        }
+
+        record.setReviewedRawContent(reviewedRawContent);
+        record.setReviewedContextTarget(reviewedContextTarget);
+        record.setReviewedTags(tagsProvided ? toJson(sanitizeTags(request.getReviewedTags())) : null);
+        record.setReviewNote(normalizeText(request.getReviewNote()));
+    }
+
     private void applyKeywordCondition(LambdaQueryWrapper<CorpusRecord> query,
                                        String keyword,
                                        List<String> searchFields) {
@@ -169,6 +253,35 @@ public class CorpusRecordServiceImpl extends ServiceImpl<CorpusRecordMapper, Cor
 
     private String normalizeText(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private List<String> sanitizeTags(List<String> tags) {
+        if (tags == null || tags.isEmpty()) {
+            return List.of();
+        }
+
+        LinkedHashSet<String> sanitizedTags = new LinkedHashSet<>();
+        for (String tag : tags) {
+            String sanitizedTag = normalizeText(tag);
+            if (!StringUtils.hasText(sanitizedTag)) {
+                continue;
+            }
+            while (sanitizedTag.startsWith("#") || sanitizedTag.startsWith("＃")) {
+                sanitizedTag = sanitizedTag.substring(1).trim();
+            }
+            if (StringUtils.hasText(sanitizedTag)) {
+                sanitizedTags.add(sanitizedTag);
+            }
+        }
+        return List.copyOf(sanitizedTags);
+    }
+
+    private String toJson(List<String> value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException("Failed to serialize reviewed tags", ex);
+        }
     }
 
     private ResponseStatusException badRequest(String message) {

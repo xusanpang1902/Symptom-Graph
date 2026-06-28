@@ -383,33 +383,37 @@ GET /api/v1/corpus/{id}/image-url
 
 - [x] 增加按 `platform`、`parse_status`、`tag`、`capture_id`、时间范围查询。
 - [x] 增加分页列表 API。
-- [ ] 增加 Thymeleaf 管理页。
+- [x] 增加 Thymeleaf 管理页。
 - [x] 增加按 `raw_content` / `context_target` 的关键词检索。
 - [ ] 后续可考虑接入 Elasticsearch 或 MySQL Full-Text，用于更大规模语料检索。
 
 建议优先级：中。该扩展能让项目从“采集链路”进一步变成“可检索资料库”。
 
-说明：Milestone 15 已新增内部只读 `GET /api/v1/corpus` 分页查询 API，查询主资源为 `corpus_record`。支持平台、解析状态、单个 JSON 精确标签、采集批次、`collected_time` 半开时间范围和正文/上下文单关键词检索；文本字段通过重复 `searchFields=rawContent&searchFields=contextTarget` 参数指定，未指定时搜索两字段。结果按 `collected_time DESC, id DESC` 返回，默认 20 条、最大 100 条，并包含精确 `total` / `totalPages`。列表返回完整正文和上下文、标签、采集时间与图片 hash；私有 OSS 图片继续通过既有单记录 signed URL 接口按需获取。已新增 MyBatis-Plus MySQL 分页拦截器、`(collected_time DESC, id DESC)` 索引、MockMvc API 测试与 Testcontainers MySQL 8 集成测试；已在 Docker Desktop 环境验证 6 个 Controller 测试和 3 个 MySQL 集成测试通过。为使 `schema.sql` 可在 MySQL 8 初始化，已将 `capture_record.force` 保留关键字列和 MyBatis-Plus 映射显式转义。由于本阶段范围聚焦可复用内部 API，Thymeleaf 管理页、认证授权、多关键词/多标签逻辑、原评论发布时间筛选及全文检索明确延后；详细契约和性能取舍记录于 `docs/milestone-15-query-design.md`，讨论与实现过程记录于 `docs/milestone-15-implementation-record.md`。
+说明：Milestone 15 已新增内部只读 `GET /api/v1/corpus` 分页查询 API，查询主资源为 `corpus_record`。支持平台、解析状态、单个 JSON 精确标签、采集批次、`collected_time` 半开时间范围和正文/上下文单关键词检索；文本字段通过重复 `searchFields=rawContent&searchFields=contextTarget` 参数指定，未指定时搜索两字段。结果按 `collected_time DESC, id DESC` 返回，默认 20 条、最大 100 条，并包含精确 `total` / `totalPages`。列表返回完整正文和上下文、标签、采集时间与图片 hash；私有 OSS 图片继续通过既有单记录 signed URL 接口按需获取。已新增 Thymeleaf 只读管理页 `/corpus/manage`，页面复用 `GET /api/v1/corpus` 做筛选、关键词检索和分页，不在页面 Controller 中复制查询规则；图片预览通过既有 `GET /api/v1/corpus/{id}/image-url` 按需获取临时 signed URL。已新增 MyBatis-Plus MySQL 分页拦截器、`(collected_time DESC, id DESC)` 索引、MockMvc API 测试与 Testcontainers MySQL 8 集成测试；已在 Docker Desktop 环境验证 6 个 Controller 测试和 3 个 MySQL 集成测试通过。为使 `schema.sql` 可在 MySQL 8 初始化，已将 `capture_record.force` 保留关键字列和 MyBatis-Plus 映射显式转义。当前计划内查询与管理页能力已完成；Elasticsearch / MySQL Full-Text 作为更大规模检索方向保留到后续真实数据量增长后评估。认证授权、多关键词/多标签逻辑、原评论发布时间筛选及全文检索明确延后；详细契约和性能取舍记录于 `docs/milestone-15-query-design.md`，讨论与实现过程记录于 `docs/milestone-15-implementation-record.md`。
 
 跨 session 的状态、验证结果和下一步入口记录于 `docs/session-handoff.md`；该文档需在每个 session 结束时覆盖更新，里程碑与范围仍以本计划为准。
 
 ### Milestone 16：人工校对与版本追踪
 
-- [ ] 增加人工修正 `raw_content`、`context_target`、`tags` 的能力。
-- [ ] 保存模型原始识别结果和人工修订结果，避免覆盖证据链。
-- [ ] 增加校对状态，例如 `UNREVIEWED`、`REVIEWED`、`CORRECTED`。
-- [ ] Markdown 中可选择输出模型识别版本或人工校对版本。
+- [x] 增加人工修正 `raw_content`、`context_target`、`tags` 的能力。
+- [x] 保存模型原始识别结果和人工修订结果，避免覆盖证据链。
+- [x] 增加校对状态，例如 `UNREVIEWED`、`REVIEWED`、`CORRECTED`。
+- [x] Markdown 中可选择输出模型识别版本或人工校对版本。
 
 建议优先级：中。该扩展适合在真实资料沉淀场景中提升语料质量。
+说明：Milestone 16 已按方案 B 完成初版人工校对与版本追踪。`corpus_record.raw_content` / `context_target` / `tags` 保留为模型原始版本，新增 `review_status`、`reviewed_raw_content`、`reviewed_context_target`、`reviewed_tags`、`reviewed_at`、`review_note` 保存人工校对版本，避免覆盖证据链。新增 `PATCH /api/v1/corpus/{id}/review`，支持 `UNREVIEWED`、`REVIEWED`、`CORRECTED` 三种状态，`CORRECTED` 至少提交一个人工修订字段，并复用标签清洗规则去掉 `#` / `＃`、空值和重复项。`/corpus/manage` 已增量增加校对状态展示和轻量校对表单。Markdown 默认继续输出模型版本；当 `MARKDOWN_CONTENT_VERSION=reviewed` / `app.markdown.content-version=reviewed` 且记录为 `CORRECTED` 时，输出人工校对版本，并在 Front Matter 写入 `review_status` 与 `content_version`。初版不做完整版本历史表，后续如需审计每次修改可增加 revision 表；规划与取舍记录见 `docs/milestone-16-review-planning.md`。
 
 ### Milestone 17：Provider 与模型治理
 
-- [ ] 支持接口级或任务级模型选择，而不仅是全局 `app.vision.provider`。
-- [ ] 记录每次识别使用的 provider、model、耗时和 token/成本估算。
-- [ ] 增加模型失败率、空结果率和平均耗时统计。
+- [x] 支持接口级或任务级模型选择，而不仅是全局 `app.vision.provider`。
+- [x] 记录每次识别使用的 provider、model 和耗时。
+- [ ] 补充不同 Provider 响应中的 token 用量解析与成本估算规则。
+- [x] 增加模型失败率、空结果率和平均耗时统计。
 - [ ] 支持同一截图用不同模型重新识别并比较结果。
 
 建议优先级：中。该扩展能让项目更适合展示“多模型 Provider 策略”和模型治理能力。
+
+说明：Milestone 17 后台第一阶段已完成。`POST /api/v1/corpus/upload` 新增可选 `provider` / `model` 参数；未传时继续回退到全局 `app.vision.provider` 和对应默认模型。新图异步任务会把实际 provider/model 写入 `capture_record` 和 `CorpusProcessMessage`，RabbitMQ Consumer 通过 `VisionRecognitionOptions` 按任务选择 Provider 和模型，重试/死信消息也保留该选择；`force=true` 同步重识别同样使用本次请求的 provider/model。Gemini 与 OpenRouter Provider 已支持单次调用级模型覆盖，不修改全局配置对象。新增 `recognition_run` 表、Entity、Mapper、Service，用于记录每次识别运行的 provider、model、状态、item_count、started_at、finished_at、duration_ms、错误信息和原始响应，并预留 input/output/total tokens 与 estimated_cost 字段。新增 `GET /api/v1/recognition-runs/stats`，按 provider/model 聚合调用次数、成功率、空结果率、失败率、平均耗时、token 合计和成本合计。当前 token/成本字段尚未从 Gemini/OpenRouter 响应中真实解析，后续应根据各 Provider 返回结构和价格配置补齐；同图多模型重识别、结果比较和采纳流程仍未实现。
 
 ### Milestone 18：简历与面试展示材料
 

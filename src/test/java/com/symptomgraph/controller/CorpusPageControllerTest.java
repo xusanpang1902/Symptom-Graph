@@ -57,6 +57,19 @@ class CorpusPageControllerTest {
     }
 
     @Test
+    void managePageReturnsCorpusManageTemplate() throws Exception {
+        mockMvc.perform(get("/corpus/manage"))
+                .andExpect(status().isOk())
+                .andExpect(view().name("corpus-manage"))
+                .andExpect(content().string(containsString("语料管理")))
+                .andExpect(content().string(containsString("/api/v1/corpus")))
+                .andExpect(content().string(containsString("searchFields")))
+                .andExpect(content().string(containsString("图片预览")))
+                .andExpect(content().string(containsString("上一页")))
+                .andExpect(content().string(containsString("下一页")));
+    }
+
+    @Test
     void uploadPostsToIngestionServiceAndShowsResult() throws Exception {
         MockMultipartFile file = new MockMultipartFile("file", "test.png", "image/png", "image".getBytes());
         CorpusUploadResponse response = buildResponse(false, true);

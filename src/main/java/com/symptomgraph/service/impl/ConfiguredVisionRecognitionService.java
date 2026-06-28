@@ -1,6 +1,7 @@
 package com.symptomgraph.service.impl;
 
 import com.symptomgraph.config.VisionProperties;
+import com.symptomgraph.dto.VisionRecognitionOptions;
 import com.symptomgraph.dto.VisionRecognitionResult;
 import com.symptomgraph.exception.VisionRecognitionException;
 import com.symptomgraph.service.VisionRecognitionProvider;
@@ -32,16 +33,24 @@ public class ConfiguredVisionRecognitionService implements VisionRecognitionServ
 
     @Override
     public VisionRecognitionResult recognize(byte[] imageBytes, String mimeType) {
-        String configuredProviderName = normalize(properties.getProvider());
+        return recognize(imageBytes, mimeType, VisionRecognitionOptions.of(properties.getProvider(), null));
+    }
+
+    @Override
+    public VisionRecognitionResult recognize(byte[] imageBytes, String mimeType, VisionRecognitionOptions options) {
+        String requestedProvider = options == null || !StringUtils.hasText(options.getProvider())
+                ? properties.getProvider()
+                : options.getProvider();
+        String configuredProviderName = normalize(requestedProvider);
         if (!StringUtils.hasText(configuredProviderName)) {
             throw new VisionRecognitionException(STATUS_MODEL_FAILED, "Vision provider is not configured");
         }
 
         VisionRecognitionProvider configuredProvider = providers.get(configuredProviderName);
         if (configuredProvider == null) {
-            throw new VisionRecognitionException(STATUS_MODEL_FAILED, "Unsupported vision provider: " + properties.getProvider());
+            throw new VisionRecognitionException(STATUS_MODEL_FAILED, "Unsupported vision provider: " + requestedProvider);
         }
-        return configuredProvider.recognize(imageBytes, mimeType);
+        return configuredProvider.recognize(imageBytes, mimeType, options);
     }
 
     private String normalize(String providerName) {

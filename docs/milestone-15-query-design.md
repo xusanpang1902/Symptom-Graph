@@ -4,7 +4,7 @@
 
 本阶段提供面向受信任内网部署者、数据分析师和研究人员的只读语料查询 API。它用于在 MySQL 中定位、浏览和整理 `corpus_record`，不替代 Obsidian 的标签、图谱和知识管理能力。
 
-首个交付只实现 API；Thymeleaf 管理页、认证授权和面向非技术人员的交互优化留待后续阶段。部署者应通过内网、反向代理或 VPN 限制访问。
+首个 API 交付先建立稳定查询契约；随后已补充 Thymeleaf 只读管理页 `/corpus/manage`，页面复用同一 API，不复制查询规则。认证授权和面向非技术人员的交互优化留待后续阶段。部署者应通过内网、反向代理或 VPN 限制访问。
 
 查询主资源是“一条评论语料” `corpus_record`，不是截图处理任务 `capture_record`。图片仍存于私有 OSS：列表不生成 signed URL，调用方按需请求既有的 `GET /api/v1/corpus/{id}/image-url`。
 
@@ -43,7 +43,7 @@ GET /api/v1/corpus?platform=小红书&tag=医疗焦虑&keyword=检测&searchFiel
 
 普通字段使用 MyBatis-Plus 条件查询；标签使用 MySQL `JSON_CONTAINS` 精确匹配；关键词使用数据库默认排序规则下的 `LIKE '%keyword%'`。关键词和标签值必须通过参数绑定，不拼接 SQL。
 
-分页使用 MyBatis-Plus MySQL 分页拦截器，因此每次列表查询会执行精确 `COUNT` 和当前页查询。当前数据规模下，精确总量对研究整理和未来管理页更有价值。
+分页使用 MyBatis-Plus MySQL 分页拦截器，因此每次列表查询会执行精确 `COUNT` 和当前页查询。当前数据规模下，精确总量对研究整理和管理页翻页更有价值。
 
 `corpus_record` 增加 `(collected_time DESC, id DESC)` 索引以服务默认时间排序。当前不增加 JSON 多值索引、全文索引、Elasticsearch、标签关联表或多组复合索引；应以真实数据量、查询日志和 `EXPLAIN ANALYZE` 结果决定后续优化。
 
@@ -55,7 +55,7 @@ GET /api/v1/corpus?platform=小红书&tag=医疗焦虑&keyword=检测&searchFiel
 
 ## 延后项
 
-- Thymeleaf 管理页与研究人员交互体验。
+- 更完整的研究人员交互体验，例如批量操作、保存筛选条件和标签建议。
 - 认证、授权与角色模型。
 - 多关键词 ANY/ALL、多标签组合、原评论发布时间筛选和标签建议接口。
 - MySQL Full-Text、Elasticsearch、游标分页与更大规模检索优化。

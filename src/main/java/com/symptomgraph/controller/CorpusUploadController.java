@@ -20,7 +20,9 @@ public class CorpusUploadController {
 
     @PostMapping("/upload")
     public CorpusUploadResponse upload(@RequestParam("file") MultipartFile file,
-                                       @RequestParam(value = "force", defaultValue = "false") boolean force) {
-        return corpusIngestionService.ingest(file, force);
+                                       @RequestParam(value = "force", defaultValue = "false") boolean force,
+                                       @RequestParam(value = "provider", required = false) String provider,
+                                       @RequestParam(value = "model", required = false) String model) {
+        return corpusIngestionService.ingest(file, force, provider, model);
     }
 }
