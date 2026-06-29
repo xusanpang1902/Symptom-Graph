@@ -8,12 +8,14 @@ import com.symptomgraph.dto.VisionRecognitionOptions;
 import com.symptomgraph.dto.VisionRecognitionResult;
 import com.symptomgraph.entity.CaptureRecord;
 import com.symptomgraph.entity.CorpusRecord;
+import com.symptomgraph.entity.RecognitionRun;
 import com.symptomgraph.exception.VisionRecognitionException;
 import com.symptomgraph.service.CaptureRecordService;
 import com.symptomgraph.service.CorpusRecordService;
 import com.symptomgraph.service.MarkdownExportService;
 import com.symptomgraph.service.OssStorageService;
 import com.symptomgraph.service.RecognitionRunService;
+import com.symptomgraph.service.RecognitionTokenUsageParser;
 import com.symptomgraph.service.VisionRecognitionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -71,7 +73,8 @@ class CorpusProcessMessageListenerTest {
                 corpusProcessMessageProducer,
                 new CorpusProcessFailureClassifier(),
                 new CorpusRabbitMqProperties(),
-                new ObjectMapper()
+                new ObjectMapper(),
+                new RecognitionTokenUsageParser(new ObjectMapper())
         );
     }
 
@@ -83,7 +86,15 @@ class CorpusProcessMessageListenerTest {
         VisionRecognitionResult result = new VisionRecognitionResult();
         result.setPlatform("小红书");
         result.setContextTarget("上下文原文");
-        result.setModelRawResponse("{\"ok\":true}");
+        result.setModelRawResponse("""
+                {
+                  "usageMetadata": {
+                    "promptTokenCount": 120,
+                    "candidatesTokenCount": 34,
+                    "totalTokenCount": 154
+                  }
+                }
+                """);
         VisionRecognitionItem first = new VisionRecognitionItem();
         first.setCommentIndex(1);
         first.setRawContent("第一条评论");
@@ -133,9 +144,15 @@ class CorpusProcessMessageListenerTest {
         ArgumentCaptor<CaptureRecord> captureRecordCaptor = ArgumentCaptor.forClass(CaptureRecord.class);
         verify(captureRecordService).updateById(captureRecordCaptor.capture());
         assertThat(captureRecordCaptor.getValue().getProcessStatus()).isEqualTo("SUCCESS");
-        assertThat(captureRecordCaptor.getValue().getModelRawResponse()).isEqualTo("{\"ok\":true}");
+        assertThat(captureRecordCaptor.getValue().getModelRawResponse()).contains("usageMetadata");
         assertThat(captureRecordCaptor.getValue().getRetryCount()).isZero();
         assertThat(captureRecordCaptor.getValue().getLastErrorType()).isNull();
+
+        ArgumentCaptor<RecognitionRun> recognitionRunCaptor = ArgumentCaptor.forClass(RecognitionRun.class);
+        verify(recognitionRunService).updateById(recognitionRunCaptor.capture());
+        assertThat(recognitionRunCaptor.getValue().getInputTokens()).isEqualTo(120);
+        assertThat(recognitionRunCaptor.getValue().getOutputTokens()).isEqualTo(34);
+        assertThat(recognitionRunCaptor.getValue().getTotalTokens()).isEqualTo(154);
     }
 
     @Test

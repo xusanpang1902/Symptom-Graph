@@ -59,6 +59,8 @@ public class RecognitionRunController {
         item.setEmptyRate(rate(stats.emptyRuns, stats.totalRuns));
         item.setFailureRate(rate(stats.failedRuns, stats.totalRuns));
         item.setAverageDurationMs(stats.durationCount == 0 ? null : stats.durationTotal / stats.durationCount);
+        item.setInputTokens(stats.inputTokens);
+        item.setOutputTokens(stats.outputTokens);
         item.setTotalTokens(stats.totalTokens);
         item.setEstimatedCost(stats.estimatedCost);
         return item;
@@ -92,7 +94,11 @@ public class RecognitionRunController {
 
         private long durationCount;
 
-        private Long totalTokens;
+        private long totalTokens;
+
+        private long inputTokens;
+
+        private long outputTokens;
 
         private BigDecimal estimatedCost = BigDecimal.ZERO;
 
@@ -111,8 +117,14 @@ public class RecognitionRunController {
                 durationTotal += run.getDurationMs();
                 durationCount++;
             }
+            if (run.getInputTokens() != null) {
+                inputTokens += run.getInputTokens();
+            }
+            if (run.getOutputTokens() != null) {
+                outputTokens += run.getOutputTokens();
+            }
             if (run.getTotalTokens() != null) {
-                totalTokens = totalTokens == null ? run.getTotalTokens() : totalTokens + run.getTotalTokens();
+                totalTokens += run.getTotalTokens();
             }
             if (run.getEstimatedCost() != null) {
                 estimatedCost = estimatedCost.add(run.getEstimatedCost());

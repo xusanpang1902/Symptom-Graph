@@ -19,6 +19,7 @@ import com.symptomgraph.service.ImageHashBloomFilterService;
 import com.symptomgraph.service.MarkdownExportService;
 import com.symptomgraph.service.OssStorageService;
 import com.symptomgraph.service.RecognitionRunService;
+import com.symptomgraph.service.RecognitionTokenUsageParser;
 import com.symptomgraph.service.VisionRecognitionService;
 import com.symptomgraph.util.ImageHashUtils;
 import com.symptomgraph.exception.VisionRecognitionException;
@@ -86,7 +87,8 @@ class CorpusIngestionServiceImplTest {
                 new VisionProperties(),
                 new GeminiProperties(),
                 new OpenRouterProperties(),
-                new ObjectMapper()
+                new ObjectMapper(),
+                new RecognitionTokenUsageParser(new ObjectMapper())
         );
     }
 

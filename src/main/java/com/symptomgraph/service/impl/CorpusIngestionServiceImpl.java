@@ -10,6 +10,7 @@ import com.symptomgraph.dto.CorpusProcessMessage;
 import com.symptomgraph.dto.CorpusRecordResponse;
 import com.symptomgraph.dto.CorpusUploadResponse;
 import com.symptomgraph.dto.OssUploadResult;
+import com.symptomgraph.dto.RecognitionTokenUsage;
 import com.symptomgraph.dto.VisionRecognitionItem;
 import com.symptomgraph.dto.VisionRecognitionOptions;
 import com.symptomgraph.dto.VisionRecognitionResult;
@@ -25,6 +26,7 @@ import com.symptomgraph.service.ImageHashBloomFilterService;
 import com.symptomgraph.service.MarkdownExportService;
 import com.symptomgraph.service.OssStorageService;
 import com.symptomgraph.service.RecognitionRunService;
+import com.symptomgraph.service.RecognitionTokenUsageParser;
 import com.symptomgraph.service.VisionRecognitionService;
 import com.symptomgraph.util.ImageHashUtils;
 import org.springframework.stereotype.Service;
@@ -63,6 +65,7 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
     private final GeminiProperties geminiProperties;
     private final OpenRouterProperties openRouterProperties;
     private final ObjectMapper objectMapper;
+    private final RecognitionTokenUsageParser tokenUsageParser;
 
     // 构造器
     public CorpusIngestionServiceImpl(CaptureRecordService captureRecordService,
@@ -76,7 +79,8 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
                                       VisionProperties visionProperties,
                                       GeminiProperties geminiProperties,
                                       OpenRouterProperties openRouterProperties,
-                                      ObjectMapper objectMapper) {
+                                      ObjectMapper objectMapper,
+                                      RecognitionTokenUsageParser tokenUsageParser) {
         this.captureRecordService = captureRecordService;
         this.corpusRecordService = corpusRecordService;
         this.imageHashBloomFilterService = imageHashBloomFilterService;
@@ -89,6 +93,7 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
         this.geminiProperties = geminiProperties;
         this.openRouterProperties = openRouterProperties;
         this.objectMapper = objectMapper;
+        this.tokenUsageParser = tokenUsageParser;
     }
 
     @Override
@@ -319,6 +324,10 @@ public class CorpusIngestionServiceImpl implements CorpusIngestionService {
         recognitionRun.setFinishedAt(finishedAt);
         recognitionRun.setDurationMs(Duration.between(recognitionRun.getStartedAt(), finishedAt).toMillis());
         recognitionRun.setModelRawResponse(modelRawResponse);
+        RecognitionTokenUsage tokenUsage = tokenUsageParser.parse(recognitionRun.getProvider(), modelRawResponse);
+        recognitionRun.setInputTokens(tokenUsage.inputTokens());
+        recognitionRun.setOutputTokens(tokenUsage.outputTokens());
+        recognitionRun.setTotalTokens(tokenUsage.totalTokens());
         recognitionRun.setErrorType(errorType);
         recognitionRun.setErrorMessage(errorMessage);
         recognitionRun.setUpdatedAt(finishedAt);

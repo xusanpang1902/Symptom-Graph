@@ -148,9 +148,9 @@ capture_record.process_status = EMPTY_RESULT
 - `chore: commit current milestone 15-17 changes`
   - 目标：提交当前已完成的查询管理、人工校对和 Provider 治理改动，避免后续开发继续混入同一批 diff。
   - 验收：工作区关键业务改动已进入 Git 历史，commit message 能概括 Milestone 15/16/17 的主要能力。
-- `feat: parse token usage and estimate recognition cost`
-  - 目标：从 Gemini/OpenRouter 原始响应中解析 token usage，并根据模型价格配置估算调用成本。
-  - 验收：`recognition_run.input_tokens`、`output_tokens`、`total_tokens`、`estimated_cost` 可写入真实数据；`GET /api/v1/recognition-runs/stats` 可返回成本汇总；缺失 token 的模型不会导致识别任务失败。
+- `feat: estimate recognition cost from configured model prices`
+  - 目标：在已完成 Gemini/OpenRouter token usage 解析的基础上，根据本地模型价格配置估算调用成本。
+  - 验收：`recognition_run.estimated_cost` 可在价格配置存在时写入真实估算值；`GET /api/v1/recognition-runs/stats` 可返回成本汇总；缺失价格配置或缺失 token 的模型不会导致识别任务失败。
 
 ### P1：模型治理与展示材料
 

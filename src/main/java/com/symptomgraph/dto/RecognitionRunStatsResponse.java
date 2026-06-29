@@ -38,6 +38,10 @@ public class RecognitionRunStatsResponse {
 
         private Long averageDurationMs;
 
+        private Long inputTokens;
+
+        private Long outputTokens;
+
         private Long totalTokens;
 
         private BigDecimal estimatedCost;

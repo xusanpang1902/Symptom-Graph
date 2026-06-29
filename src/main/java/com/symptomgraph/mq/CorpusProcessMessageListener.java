@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.symptomgraph.config.CorpusRabbitMqProperties;
 import com.symptomgraph.dto.CorpusProcessMessage;
+import com.symptomgraph.dto.RecognitionTokenUsage;
 import com.symptomgraph.dto.VisionRecognitionItem;
 import com.symptomgraph.dto.VisionRecognitionOptions;
 import com.symptomgraph.dto.VisionRecognitionResult;
@@ -16,6 +17,7 @@ import com.symptomgraph.service.CorpusRecordService;
 import com.symptomgraph.service.MarkdownExportService;
 import com.symptomgraph.service.OssStorageService;
 import com.symptomgraph.service.RecognitionRunService;
+import com.symptomgraph.service.RecognitionTokenUsageParser;
 import com.symptomgraph.service.VisionRecognitionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -53,6 +55,7 @@ public class CorpusProcessMessageListener {
     private final CorpusProcessFailureClassifier failureClassifier;
     private final CorpusRabbitMqProperties rabbitMqProperties;
     private final ObjectMapper objectMapper;
+    private final RecognitionTokenUsageParser tokenUsageParser;
 
     public CorpusProcessMessageListener(CaptureRecordService captureRecordService,
                                         CorpusRecordService corpusRecordService,
@@ -63,7 +66,8 @@ public class CorpusProcessMessageListener {
                                         CorpusProcessMessageProducer corpusProcessMessageProducer,
                                         CorpusProcessFailureClassifier failureClassifier,
                                         CorpusRabbitMqProperties rabbitMqProperties,
-                                        ObjectMapper objectMapper) {
+                                        ObjectMapper objectMapper,
+                                        RecognitionTokenUsageParser tokenUsageParser) {
         this.captureRecordService = captureRecordService;
         this.corpusRecordService = corpusRecordService;
         this.ossStorageService = ossStorageService;
@@ -74,6 +78,7 @@ public class CorpusProcessMessageListener {
         this.failureClassifier = failureClassifier;
         this.rabbitMqProperties = rabbitMqProperties;
         this.objectMapper = objectMapper;
+        this.tokenUsageParser = tokenUsageParser;
     }
 
     @Transactional
@@ -151,6 +156,10 @@ public class CorpusProcessMessageListener {
         recognitionRun.setFinishedAt(finishedAt);
         recognitionRun.setDurationMs(Duration.between(recognitionRun.getStartedAt(), finishedAt).toMillis());
         recognitionRun.setModelRawResponse(modelRawResponse);
+        RecognitionTokenUsage tokenUsage = tokenUsageParser.parse(recognitionRun.getProvider(), modelRawResponse);
+        recognitionRun.setInputTokens(tokenUsage.inputTokens());
+        recognitionRun.setOutputTokens(tokenUsage.outputTokens());
+        recognitionRun.setTotalTokens(tokenUsage.totalTokens());
         recognitionRun.setErrorType(errorType);
         recognitionRun.setErrorMessage(errorMessage);
         recognitionRun.setUpdatedAt(finishedAt);
