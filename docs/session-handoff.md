@@ -17,6 +17,15 @@
 4. 并行推进 Milestone 18 展示材料，先补架构图、核心链路时序图和项目讲解稿。
 5. 等用户提供足够真实截图后，再回补 Milestone 12 的 20 张截图质量评估，不能伪造测试结果。
 
+## Parallel Codex Workflow
+
+- Design session prompt: `docs/workflows/codex-design-session-prompt.md`
+- Implementation session prompt: `docs/workflows/codex-implementation-session-prompt.md`
+- Checklist template: `docs/workflows/implementation-checklist-template.md`
+- Design session 默认只做方案、接口、数据流、风险和验收标准，不改业务代码。
+- Implementation session 根据 checklist 独占代码实现，完成后运行测试并更新项目计划与本 handoff。
+- 两个 session 不应同时编辑同一批文件；如需并行改代码，应使用不同分支或 git worktree。
+
 ## 本次已完成能力
 
 - 新增 `RecognitionTokenUsageParser`，集中解析 Provider 原始响应中的 token usage。
@@ -53,3 +62,4 @@ mvn test
 - 同步重识别核心：`src/main/java/com/symptomgraph/service/impl/CorpusIngestionServiceImpl.java`
 - 识别运行记录：`src/main/java/com/symptomgraph/entity/RecognitionRun.java`
 - 统计接口：`src/main/java/com/symptomgraph/controller/RecognitionRunController.java`
+- 并行 Codex 工作流：`docs/workflows/`
