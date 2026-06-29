@@ -60,6 +60,11 @@ public class CorpusPageController {
         return "corpus-manage";
     }
 
+    @GetMapping("/corpus/analytics")
+    public String analytics() {
+        return "corpus-analytics";
+    }
+
     @PostMapping("/corpus/upload")
     public String upload(@RequestParam("file") MultipartFile file,
                          @RequestParam(value = "force", defaultValue = "false") boolean force,

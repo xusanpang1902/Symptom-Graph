@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Symptom-Graph 分析工作台</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --bg: #f6f7f9;
+            --surface: #ffffff;
+            --surface-soft: #eef5f7;
+            --ink: #1f2933;
+            --muted: #64748b;
+            --line: #d8dee7;
+            --accent: #1f7a8c;
+            --accent-dark: #155e6d;
+            --success: #217a4b;
+            --warn: #a46208;
+            --danger: #b42318;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--ink);
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+
+        main {
+            width: min(1320px, calc(100% - 32px));
+            margin: 28px auto 48px;
+        }
+
+        header {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 20px;
+            margin-bottom: 18px;
+        }
+
+        h1 {
+            margin: 0 0 8px;
+            font-size: 30px;
+            line-height: 1.15;
+        }
+
+        h2 {
+            margin: 0;
+            font-size: 18px;
+        }
+
+        p {
+            margin: 0;
+            color: var(--muted);
+            line-height: 1.65;
+        }
+
+        a {
+            color: var(--accent);
+            text-decoration: none;
+            font-weight: 700;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
+        .nav-links {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+        }
+
+        .toolbar,
+        .panel,
+        .metric {
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+        }
+
+        .toolbar {
+            padding: 18px;
+            margin-bottom: 18px;
+        }
+
+        form {
+            display: grid;
+            gap: 14px;
+        }
+
+        .filter-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        label {
+            display: grid;
+            gap: 6px;
+            color: var(--muted);
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        input,
+        select {
+            width: 100%;
+            min-height: 40px;
+            border: 1px solid var(--line);
+            border-radius: 6px;
+            background: #fff;
+            color: var(--ink);
+            font: inherit;
+            padding: 8px 10px;
+        }
+
+        .field-options {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 14px;
+            min-height: 40px;
+            padding: 8px 0 0;
+        }
+
+        .field-options label {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            color: var(--ink);
+            font-weight: 600;
+        }
+
+        .field-options input {
+            width: 16px;
+            min-height: 16px;
+        }
+
+        .actions {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            border-top: 1px solid var(--line);
+            padding-top: 14px;
+        }
+
+        .button-row {
+            display: flex;
+            gap: 10px;
+        }
+
+        button {
+            min-height: 40px;
+            border: 1px solid transparent;
+            border-radius: 6px;
+            cursor: pointer;
+            font: inherit;
+            font-weight: 800;
+            padding: 8px 14px;
+        }
+
+        .primary {
+            background: var(--accent);
+            color: #fff;
+        }
+
+        .secondary {
+            background: #fff;
+            border-color: var(--line);
+            color: var(--ink);
+        }
+
+        .primary:disabled {
+            cursor: not-allowed;
+            opacity: 0.45;
+        }
+
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 12px;
+            margin-bottom: 18px;
+        }
+
+        .metric {
+            padding: 16px;
+        }
+
+        .metric span {
+            color: var(--muted);
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        .metric strong {
+            display: block;
+            margin-top: 8px;
+            font-size: 30px;
+            line-height: 1;
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 18px;
+        }
+
+        .panel {
+            padding: 18px;
+        }
+
+        .panel-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+
+        .status-line {
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        .bar-list {
+            display: grid;
+            gap: 10px;
+        }
+
+        .bar-row {
+            display: grid;
+            grid-template-columns: minmax(0, 150px) minmax(0, 1fr) auto;
+            gap: 10px;
+            align-items: center;
+            font-size: 14px;
+        }
+
+        .bar-label {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-weight: 700;
+        }
+
+        .bar-track {
+            height: 12px;
+            overflow: hidden;
+            border-radius: 999px;
+            background: var(--surface-soft);
+        }
+
+        .bar-fill {
+            min-width: 2px;
+            height: 100%;
+            border-radius: 999px;
+            background: var(--accent);
+        }
+
+        .bar-count {
+            color: var(--muted);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .empty,
+        .error {
+            border: 1px dashed var(--line);
+            border-radius: 8px;
+            padding: 22px;
+            color: var(--muted);
+            text-align: center;
+        }
+
+        .error {
+            border-color: #f1b4ae;
+            color: var(--danger);
+            background: #fff7f6;
+        }
+
+        @media (max-width: 980px) {
+            header {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+
+            .filter-grid,
+            .dashboard,
+            .metrics {
+                grid-template-columns: 1fr;
+            }
+
+            .actions {
+                align-items: stretch;
+                flex-direction: column;
+            }
+
+            .button-row,
+            .button-row button {
+                width: 100%;
+            }
+
+            .bar-row {
+                grid-template-columns: minmax(0, 1fr) auto;
+            }
+
+            .bar-track {
+                grid-column: 1 / -1;
+            }
+        }
+    </style>
+</head>
+<body>
+<main>
+    <header>
+        <div>
+            <h1>分析工作台</h1>
+            <p>按平台、状态、标签、批次、采集时间和关键词聚合 corpus_record。</p>
+        </div>
+        <nav class="nav-links">
+            <a href="/corpus/manage">语料管理</a>
+            <a href="/corpus/upload">上传页</a>
+        </nav>
+    </header>
+
+    <section class="toolbar" aria-label="分析筛选条件">
+        <form id="analyticsForm">
+            <div class="filter-grid">
+                <label>
+                    平台
+                    <input name="platform" type="text" placeholder="小红书 / 微博 / 知乎">
+                </label>
+                <label>
+                    解析状态
+                    <select name="parseStatus">
+                        <option value="">全部</option>
+                        <option value="SUCCESS">SUCCESS</option>
+                        <option value="PROCESSING">PROCESSING</option>
+                        <option value="EMPTY_RESULT">EMPTY_RESULT</option>
+                        <option value="MODEL_FAILED">MODEL_FAILED</option>
+                        <option value="PARSE_FAILED">PARSE_FAILED</option>
+                    </select>
+                </label>
+                <label>
+                    标签
+                    <input name="tag" type="text" placeholder="不带 #">
+                </label>
+                <label>
+                    采集批次
+                    <input name="captureId" type="text" placeholder="capture_id">
+                </label>
+                <label>
+                    采集开始
+                    <input name="collectedFrom" type="datetime-local">
+                </label>
+                <label>
+                    采集结束
+                    <input name="collectedTo" type="datetime-local">
+                </label>
+                <label>
+                    关键词
+                    <input name="keyword" type="search" placeholder="单关键词">
+                </label>
+            </div>
+
+            <div class="actions">
+                <div>
+                    <div class="status-line">关键词检索字段</div>
+                    <div class="field-options">
+                        <label><input type="checkbox" name="searchFields" value="rawContent" checked> 评论原文</label>
+                        <label><input type="checkbox" name="searchFields" value="contextTarget" checked> 上下文原文</label>
+                    </div>
+                </div>
+                <div class="button-row">
+                    <button class="secondary" type="button" id="resetButton">重置</button>
+                    <button class="primary" type="submit" id="analyzeButton">生成分析</button>
+                </div>
+            </div>
+        </form>
+    </section>
+
+    <section class="metrics" aria-label="核心指标">
+        <div class="metric"><span>语料总数</span><strong id="totalRecords">0</strong></div>
+        <div class="metric"><span>采集批次数</span><strong id="distinctCaptureCount">0</strong></div>
+        <div class="metric"><span>成功语料</span><strong id="successRecords">0</strong></div>
+        <div class="metric"><span>已校对/修正</span><strong id="reviewedRecords">0</strong></div>
+    </section>
+
+    <section id="message" class="empty">设置筛选条件后点击生成分析。</section>
+
+    <section id="dashboard" class="dashboard" aria-label="聚合图表" style="display: none;">
+        <section class="panel">
+            <div class="panel-head">
+                <h2>平台分布</h2>
+                <span class="status-line">Top 20</span>
+            </div>
+            <div id="platformCounts" class="bar-list"></div>
+        </section>
+        <section class="panel">
+            <div class="panel-head">
+                <h2>标签 Top</h2>
+                <span class="status-line">Top 20</span>
+            </div>
+            <div id="tagCounts" class="bar-list"></div>
+        </section>
+        <section class="panel">
+            <div class="panel-head">
+                <h2>解析状态</h2>
+                <span class="status-line">parse_status</span>
+            </div>
+            <div id="parseStatusCounts" class="bar-list"></div>
+        </section>
+        <section class="panel">
+            <div class="panel-head">
+                <h2>校对状态</h2>
+                <span class="status-line">review_status</span>
+            </div>
+            <div id="reviewStatusCounts" class="bar-list"></div>
+        </section>
+        <section class="panel">
+            <div class="panel-head">
+                <h2>采集趋势</h2>
+                <span class="status-line">按天</span>
+            </div>
+            <div id="dailyCounts" class="bar-list"></div>
+        </section>
+    </section>
+</main>
+
+<script>
+    (() => {
+        const form = document.querySelector("#analyticsForm");
+        const resetButton = document.querySelector("#resetButton");
+        const analyzeButton = document.querySelector("#analyzeButton");
+        const message = document.querySelector("#message");
+        const dashboard = document.querySelector("#dashboard");
+
+        form.addEventListener("submit", (event) => {
+            event.preventDefault();
+            analyze();
+        });
+
+        resetButton.addEventListener("click", () => {
+            form.reset();
+            form.querySelectorAll("input[name='searchFields']").forEach((input) => input.checked = true);
+            dashboard.style.display = "none";
+            renderMetrics(null);
+            renderMessage("设置筛选条件后点击生成分析。", "empty");
+        });
+
+        async function analyze() {
+            analyzeButton.disabled = true;
+            dashboard.style.display = "none";
+            renderMessage("正在生成分析...", "empty");
+            try {
+                const response = await fetch(`/api/v1/corpus/analytics?${buildQueryString()}`, {
+                    headers: {"Accept": "application/json"}
+                });
+                if (!response.ok) {
+                    throw new Error(await readError(response));
+                }
+                renderAnalytics(await response.json());
+            } catch (error) {
+                renderMessage(error.message || "分析失败", "error");
+            } finally {
+                analyzeButton.disabled = false;
+            }
+        }
+
+        function buildQueryString() {
+            const formData = new FormData(form);
+            const params = new URLSearchParams();
+            const searchFields = formData.getAll("searchFields");
+            for (const [key, value] of formData.entries()) {
+                if (key === "searchFields") {
+                    continue;
+                }
+                if (value !== null && String(value).trim() !== "") {
+                    params.append(key, normalizeDateTimeValue(key, String(value).trim()));
+                }
+            }
+            searchFields.forEach((field) => params.append("searchFields", field));
+            return params.toString();
+        }
+
+        function normalizeDateTimeValue(key, value) {
+            if ((key === "collectedFrom" || key === "collectedTo") && value.length === 16) {
+                return `${value}:00`;
+            }
+            return value;
+        }
+
+        async function readError(response) {
+            const text = await response.text();
+            if (!text) {
+                return `HTTP ${response.status}`;
+            }
+            try {
+                const body = JSON.parse(text);
+                return body.message || body.error || text;
+            } catch {
+                return text;
+            }
+        }
+
+        function renderAnalytics(data) {
+            renderMetrics(data);
+            renderBars("platformCounts", data.platformCounts || []);
+            renderBars("tagCounts", data.tagCounts || []);
+            renderBars("parseStatusCounts", data.parseStatusCounts || []);
+            renderBars("reviewStatusCounts", data.reviewStatusCounts || []);
+            renderBars("dailyCounts", data.dailyCounts || []);
+            dashboard.style.display = "grid";
+            renderMessage(`已生成 ${data.totalRecords || 0} 条语料的聚合分析。`, "empty");
+        }
+
+        function renderMetrics(data) {
+            const parseStatusCounts = data?.parseStatusCounts || [];
+            const reviewStatusCounts = data?.reviewStatusCounts || [];
+            setText("totalRecords", data?.totalRecords || 0);
+            setText("distinctCaptureCount", data?.distinctCaptureCount || 0);
+            setText("successRecords", countValue(parseStatusCounts, "SUCCESS"));
+            setText("reviewedRecords", countValue(reviewStatusCounts, "REVIEWED") + countValue(reviewStatusCounts, "CORRECTED"));
+        }
+
+        function renderBars(elementId, items) {
+            const container = document.getElementById(elementId);
+            if (!Array.isArray(items) || items.length === 0) {
+                container.innerHTML = '<div class="empty">暂无数据</div>';
+                return;
+            }
+            const maxCount = Math.max(...items.map((item) => Number(item.count || 0)), 1);
+            container.innerHTML = items.map((item) => {
+                const count = Number(item.count || 0);
+                const width = Math.max(2, Math.round((count / maxCount) * 100));
+                return `
+                    <div class="bar-row" title="${escapeAttribute(item.name || 'UNKNOWN')}">
+                        <div class="bar-label">${escapeHtml(item.name || 'UNKNOWN')}</div>
+                        <div class="bar-track"><div class="bar-fill" style="width: ${width}%"></div></div>
+                        <div class="bar-count">${count}</div>
+                    </div>
+                `;
+            }).join("");
+        }
+
+        function countValue(items, name) {
+            const item = items.find((candidate) => candidate.name === name);
+            return Number(item?.count || 0);
+        }
+
+        function setText(id, value) {
+            document.getElementById(id).textContent = String(value);
+        }
+
+        function renderMessage(text, className) {
+            message.className = className;
+            message.textContent = text;
+            message.style.display = "block";
+        }
+
+        function escapeHtml(value) {
+            return String(value)
+                .replaceAll("&", "&amp;")
+                .replaceAll("<", "&lt;")
+                .replaceAll(">", "&gt;")
+                .replaceAll('"', "&quot;")
+                .replaceAll("'", "&#39;");
+        }
+
+        function escapeAttribute(value) {
+            return escapeHtml(value).replaceAll("`", "&#96;");
+        }
+    })();
+</script>
+</body>
+</html>

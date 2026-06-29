@@ -1,5 +1,6 @@
 package com.symptomgraph.service.impl;
 
+import com.symptomgraph.dto.CorpusAnalyticsResponse;
 import com.symptomgraph.dto.CorpusQueryPage;
 import com.symptomgraph.dto.CorpusQueryRequest;
 import com.symptomgraph.entity.CorpusRecord;
@@ -22,6 +23,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 @Testcontainers
 @SpringBootTest(properties = {
@@ -57,18 +59,18 @@ class CorpusRecordQueryIntegrationTest {
     @BeforeEach
     void setUp() {
         corpusRecordMapper.delete(null);
-        insertRecord(1L, "capture_1", 1, "正文提到检测", "无关上下文", "小红书",
-                "[\"医疗焦虑\"]", LocalDateTime.of(2026, 6, 1, 10, 0));
-        insertRecord(2L, "capture_2", 1, "无关正文", "上下文提到检测", "知乎",
-                "[\"恐艾\"]", LocalDateTime.of(2026, 6, 1, 11, 0));
-        insertRecord(3L, "capture_3", 1, "医疗讨论", "无关上下文", "小红书",
-                "[\"医疗\"]", LocalDateTime.of(2026, 6, 1, 12, 0));
+        insertRecord(1L, "capture_1", 1, "raw alpha keyword", "context unrelated", "platform_a",
+                "[\"tag_a\"]", LocalDateTime.of(2026, 6, 1, 10, 0));
+        insertRecord(2L, "capture_2", 1, "raw unrelated", "context alpha keyword", "platform_b",
+                "[\"tag_b\"]", LocalDateTime.of(2026, 6, 1, 11, 0));
+        insertRecord(3L, "capture_3", 1, "raw medical discussion", "context unrelated", "platform_a",
+                "[\"tag_c\"]", LocalDateTime.of(2026, 6, 1, 12, 0));
     }
 
     @Test
     void searchesExactJsonTagsAndSelectedTextFields() {
         CorpusQueryRequest tagRequest = new CorpusQueryRequest();
-        tagRequest.setTag("医疗焦虑");
+        tagRequest.setTag("tag_a");
 
         CorpusQueryPage tagResult = corpusRecordService.search(tagRequest);
 
@@ -76,7 +78,7 @@ class CorpusRecordQueryIntegrationTest {
         assertThat(tagResult.records()).extracting(CorpusRecord::getId).containsExactly(1L);
 
         CorpusQueryRequest rawContentRequest = new CorpusQueryRequest();
-        rawContentRequest.setKeyword("检测");
+        rawContentRequest.setKeyword("alpha");
         rawContentRequest.setSearchFields(List.of("rawContent"));
 
         assertThat(corpusRecordService.search(rawContentRequest).records())
@@ -84,7 +86,7 @@ class CorpusRecordQueryIntegrationTest {
                 .containsExactly(1L);
 
         CorpusQueryRequest contextTargetRequest = new CorpusQueryRequest();
-        contextTargetRequest.setKeyword("检测");
+        contextTargetRequest.setKeyword("alpha");
         contextTargetRequest.setSearchFields(List.of("contextTarget"));
 
         assertThat(corpusRecordService.search(contextTargetRequest).records())
@@ -121,7 +123,7 @@ class CorpusRecordQueryIntegrationTest {
         assertThat(normalizedResult.pageSize()).isEqualTo(100);
 
         CorpusQueryRequest invalidSearchField = new CorpusQueryRequest();
-        invalidSearchField.setKeyword("检测");
+        invalidSearchField.setKeyword("alpha");
         invalidSearchField.setSearchFields(List.of("title"));
         assertThatThrownBy(() -> corpusRecordService.search(invalidSearchField))
                 .isInstanceOf(ResponseStatusException.class)
@@ -135,6 +137,38 @@ class CorpusRecordQueryIntegrationTest {
                 .isInstanceOf(ResponseStatusException.class)
                 .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
                 .isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void analyticsAggregatesFilteredRecords() {
+        CorpusQueryRequest request = new CorpusQueryRequest();
+        request.setCollectedFrom(LocalDateTime.of(2026, 6, 1, 0, 0));
+        request.setCollectedTo(LocalDateTime.of(2026, 6, 2, 0, 0));
+
+        CorpusAnalyticsResponse analytics = corpusRecordService.analytics(request);
+
+        assertThat(analytics.getTotalRecords()).isEqualTo(3);
+        assertThat(analytics.getDistinctCaptureCount()).isEqualTo(3);
+        assertThat(analytics.getPlatformCounts())
+                .extracting(CorpusAnalyticsResponse.CountItem::getName, CorpusAnalyticsResponse.CountItem::getCount)
+                .containsExactly(tuple("platform_a", 2L), tuple("platform_b", 1L));
+        assertThat(analytics.getTagCounts())
+                .hasSize(3)
+                .extracting(CorpusAnalyticsResponse.CountItem::getCount)
+                .containsOnly(1L);
+        assertThat(analytics.getParseStatusCounts())
+                .extracting(CorpusAnalyticsResponse.CountItem::getName, CorpusAnalyticsResponse.CountItem::getCount)
+                .containsExactly(tuple("SUCCESS", 3L));
+        assertThat(analytics.getReviewStatusCounts())
+                .extracting(CorpusAnalyticsResponse.CountItem::getName, CorpusAnalyticsResponse.CountItem::getCount)
+                .containsExactly(tuple("UNREVIEWED", 3L));
+        assertThat(analytics.getDailyCounts())
+                .extracting(CorpusAnalyticsResponse.CountItem::getName, CorpusAnalyticsResponse.CountItem::getCount)
+                .containsExactly(tuple("2026-06-01", 3L));
+
+        CorpusQueryRequest captureRequest = new CorpusQueryRequest();
+        captureRequest.setCaptureId("capture_2");
+        assertThat(corpusRecordService.analytics(captureRequest).getTotalRecords()).isEqualTo(1);
     }
 
     private void insertRecord(long id,

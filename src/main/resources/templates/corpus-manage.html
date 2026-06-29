@@ -66,6 +66,12 @@
             text-decoration: underline;
         }
 
+        .nav-links {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+        }
+
         .toolbar,
         .results,
         .record {
@@ -416,7 +422,10 @@
             <h1>语料管理</h1>
             <p>按平台、状态、标签、批次、采集时间和关键词检索 corpus_record。</p>
         </div>
-        <a href="/corpus/upload">返回上传页</a>
+        <nav class="nav-links">
+            <a href="/corpus/analytics">分析工作台</a>
+            <a href="/corpus/upload">返回上传页</a>
+        </nav>
     </header>
 
     <section class="toolbar" aria-label="查询条件">

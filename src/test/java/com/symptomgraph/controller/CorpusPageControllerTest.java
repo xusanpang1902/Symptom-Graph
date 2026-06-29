@@ -70,7 +70,18 @@ class CorpusPageControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(view().name("corpus-manage"))
                 .andExpect(content().string(containsString("/api/v1/corpus")))
+                .andExpect(content().string(containsString("/corpus/analytics")))
                 .andExpect(content().string(containsString("searchFields")));
+    }
+
+    @Test
+    void analyticsPageReturnsCorpusAnalyticsTemplate() throws Exception {
+        mockMvc.perform(get("/corpus/analytics"))
+                .andExpect(status().isOk())
+                .andExpect(view().name("corpus-analytics"))
+                .andExpect(content().string(containsString("/api/v1/corpus/analytics")))
+                .andExpect(content().string(containsString("platformCounts")))
+                .andExpect(content().string(containsString("tagCounts")));
     }
 
     @Test

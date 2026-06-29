@@ -1,6 +1,7 @@
 package com.symptomgraph.service;
 
 import com.baomidou.mybatisplus.extension.service.IService;
+import com.symptomgraph.dto.CorpusAnalyticsResponse;
 import com.symptomgraph.dto.CorpusQueryPage;
 import com.symptomgraph.dto.CorpusQueryRequest;
 import com.symptomgraph.dto.CorpusReviewRequest;
@@ -19,6 +20,8 @@ public interface CorpusRecordService extends IService<CorpusRecord> {
     List<CorpusRecord> listByCaptureId(String captureId);
 
     CorpusQueryPage search(CorpusQueryRequest request);
+
+    CorpusAnalyticsResponse analytics(CorpusQueryRequest request);
 
     CorpusRecord review(Long id, CorpusReviewRequest request);
 

@@ -3,6 +3,7 @@ package com.symptomgraph.controller;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.symptomgraph.dto.CaptureRecordResponse;
+import com.symptomgraph.dto.CorpusAnalyticsResponse;
 import com.symptomgraph.dto.CorpusPageResponse;
 import com.symptomgraph.dto.CorpusQueryPage;
 import com.symptomgraph.dto.CorpusQueryRecordResponse;
@@ -59,6 +60,11 @@ public class CorpusQueryController {
                 .map(record -> CorpusQueryRecordResponse.from(record, parseTags(record.getTags()), parseTags(record.getReviewedTags())))
                 .toList());
         return response;
+    }
+
+    @GetMapping("/analytics")
+    public CorpusAnalyticsResponse analytics(@ModelAttribute CorpusQueryRequest request) {
+        return corpusRecordService.analytics(request);
     }
 
     @GetMapping("/{id}")

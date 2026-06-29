@@ -385,11 +385,12 @@ GET /api/v1/corpus/{id}/image-url
 - [x] 增加分页列表 API。
 - [x] 增加 Thymeleaf 管理页。
 - [x] 增加按 `raw_content` / `context_target` 的关键词检索。
+- [x] 增加只读语料分析工作台，支持总量、采集批次、平台、标签、解析状态、校对状态和采集日期聚合。
 - [ ] 后续可考虑接入 Elasticsearch 或 MySQL Full-Text，用于更大规模语料检索。
 
 建议优先级：中。该扩展能让项目从“采集链路”进一步变成“可检索资料库”。
 
-说明：Milestone 15 已新增内部只读 `GET /api/v1/corpus` 分页查询 API，查询主资源为 `corpus_record`。支持平台、解析状态、单个 JSON 精确标签、采集批次、`collected_time` 半开时间范围和正文/上下文单关键词检索；文本字段通过重复 `searchFields=rawContent&searchFields=contextTarget` 参数指定，未指定时搜索两字段。结果按 `collected_time DESC, id DESC` 返回，默认 20 条、最大 100 条，并包含精确 `total` / `totalPages`。列表返回完整正文和上下文、标签、采集时间与图片 hash；私有 OSS 图片继续通过既有单记录 signed URL 接口按需获取。已新增 Thymeleaf 只读管理页 `/corpus/manage`，页面复用 `GET /api/v1/corpus` 做筛选、关键词检索和分页，不在页面 Controller 中复制查询规则；图片预览通过既有 `GET /api/v1/corpus/{id}/image-url` 按需获取临时 signed URL。已新增 MyBatis-Plus MySQL 分页拦截器、`(collected_time DESC, id DESC)` 索引、MockMvc API 测试与 Testcontainers MySQL 8 集成测试；已在 Docker Desktop 环境验证 6 个 Controller 测试和 3 个 MySQL 集成测试通过。为使 `schema.sql` 可在 MySQL 8 初始化，已将 `capture_record.force` 保留关键字列和 MyBatis-Plus 映射显式转义。当前计划内查询与管理页能力已完成；Elasticsearch / MySQL Full-Text 作为更大规模检索方向保留到后续真实数据量增长后评估。认证授权、多关键词/多标签逻辑、原评论发布时间筛选及全文检索明确延后；详细契约和性能取舍记录于 `docs/milestone-15-query-design.md`，讨论与实现过程记录于 `docs/milestone-15-implementation-record.md`。
+说明：Milestone 15 已新增内部只读 `GET /api/v1/corpus` 分页查询 API，查询主资源为 `corpus_record`。支持平台、解析状态、单个 JSON 精确标签、采集批次、`collected_time` 半开时间范围和正文/上下文单关键词检索；文本字段通过重复 `searchFields=rawContent&searchFields=contextTarget` 参数指定，未指定时搜索两字段。结果按 `collected_time DESC, id DESC` 返回，默认 20 条、最大 100 条，并包含精确 `total` / `totalPages`。列表返回完整正文和上下文、标签、采集时间与图片 hash；私有 OSS 图片继续通过既有单记录 signed URL 接口按需获取。已新增 Thymeleaf 只读管理页 `/corpus/manage`，页面复用 `GET /api/v1/corpus` 做筛选、关键词检索和分页，不在页面 Controller 中复制查询规则；图片预览通过既有 `GET /api/v1/corpus/{id}/image-url` 按需获取临时 signed URL。已新增只读语料分析工作台 `/corpus/analytics` 和 `GET /api/v1/corpus/analytics`，复用同一套查询条件聚合总记录数、distinct 采集批次数、解析状态、校对状态、平台、标签和采集日期分布，作为面向研究者、数据分析者和运营分析场景的第一版数据概览。已新增 MyBatis-Plus MySQL 分页拦截器、`(collected_time DESC, id DESC)` 索引、MockMvc API 测试与 Testcontainers MySQL 8 集成测试；已在 Docker Desktop 环境验证 Controller 测试和 MySQL 集成测试通过。为使 `schema.sql` 可在 MySQL 8 初始化，已将 `capture_record.force` 保留关键字列和 MyBatis-Plus 映射显式转义。当前计划内查询、管理页与基础分析能力已完成；Elasticsearch / MySQL Full-Text 作为更大规模检索方向保留到后续真实数据量增长后评估。认证授权、多关键词/多标签逻辑、原评论发布时间筛选及全文检索明确延后；详细契约和性能取舍记录于 `docs/milestone-15-query-design.md`，讨论与实现过程记录于 `docs/milestone-15-implementation-record.md`。
 
 跨 session 的状态、验证结果和下一步入口记录于 `docs/session-handoff.md`；该文档需在每个 session 结束时覆盖更新，里程碑与范围仍以本计划为准。
 

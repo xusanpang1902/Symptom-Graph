@@ -1,6 +1,7 @@
 package com.symptomgraph.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.symptomgraph.dto.CorpusAnalyticsResponse;
 import com.symptomgraph.entity.CaptureRecord;
 import com.symptomgraph.entity.CorpusRecord;
 import com.symptomgraph.dto.CorpusQueryPage;
@@ -67,6 +68,28 @@ class CorpusQueryControllerTest {
                 .andExpect(jsonPath("$.records[0].reviewStatus").value("UNREVIEWED"))
                 .andExpect(jsonPath("$.records[0].signedUrl").doesNotExist())
                 .andExpect(jsonPath("$.records[0].modelRawResponse").doesNotExist());
+    }
+
+    @Test
+    void analyticsReturnsAggregatedCounts() throws Exception {
+        CorpusAnalyticsResponse response = new CorpusAnalyticsResponse();
+        response.setTotalRecords(3);
+        response.setDistinctCaptureCount(2);
+        response.setPlatformCounts(List.of(CorpusAnalyticsResponse.CountItem.of("小红书", 2)));
+        response.setTagCounts(List.of(CorpusAnalyticsResponse.CountItem.of("医疗焦虑", 2)));
+        response.setParseStatusCounts(List.of(CorpusAnalyticsResponse.CountItem.of("SUCCESS", 3)));
+        response.setReviewStatusCounts(List.of(CorpusAnalyticsResponse.CountItem.of("UNREVIEWED", 3)));
+        response.setDailyCounts(List.of(CorpusAnalyticsResponse.CountItem.of("2026-06-26", 3)));
+        when(corpusRecordService.analytics(any())).thenReturn(response);
+
+        mockMvc.perform(get("/api/v1/corpus/analytics")
+                        .param("platform", "小红书"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalRecords").value(3))
+                .andExpect(jsonPath("$.distinctCaptureCount").value(2))
+                .andExpect(jsonPath("$.platformCounts[0].name").value("小红书"))
+                .andExpect(jsonPath("$.tagCounts[0].name").value("医疗焦虑"))
+                .andExpect(jsonPath("$.dailyCounts[0].name").value("2026-06-26"));
     }
 
     @Test
