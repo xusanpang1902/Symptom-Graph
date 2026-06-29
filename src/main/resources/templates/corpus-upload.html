@@ -83,6 +83,31 @@
             background: #fffdf9;
         }
 
+        .model-config {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        .field {
+            display: grid;
+            gap: 8px;
+            color: var(--muted);
+            font-weight: 700;
+        }
+
+        .field select,
+        .field input {
+            width: 100%;
+            min-height: 44px;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            background: #fffdf9;
+            color: var(--ink);
+            padding: 0 12px;
+            font: inherit;
+        }
+
         .force-row {
             display: flex;
             gap: 10px;
@@ -294,6 +319,10 @@
                 grid-template-columns: 1fr;
             }
 
+            .model-config {
+                grid-template-columns: 1fr;
+            }
+
             dl {
                 grid-template-columns: 1fr;
             }
@@ -309,6 +338,26 @@
 
             <form th:action="@{/corpus/upload}" method="post" enctype="multipart/form-data">
                 <input class="file-input" type="file" name="file" accept="image/*" required>
+                <div class="model-config">
+                    <label class="field">
+                        <span>Provider</span>
+                        <select id="providerSelect" name="provider">
+                            <option th:each="providerOption : ${providerOptions}"
+                                    th:value="${providerOption}"
+                                    th:selected="${providerOption == selectedProvider}"
+                                    th:text="${providerOption}">gemini</option>
+                        </select>
+                    </label>
+                    <label class="field">
+                        <span>Model</span>
+                        <input id="modelInput" type="text" name="model" list="modelOptionsList"
+                               th:value="${selectedModel}" autocomplete="off">
+                        <datalist id="modelOptionsList">
+                            <option th:each="modelOption : ${modelOptionsByProvider[selectedProvider]}"
+                                    th:value="${modelOption}"></option>
+                        </datalist>
+                    </label>
+                </div>
                 <label class="force-row">
                     <input type="checkbox" name="force" value="true">
                     <span>强制重新识别已有截图，并覆盖原 Markdown</span>
@@ -356,6 +405,10 @@
                 <dd th:text="${result.imageHash}"></dd>
                 <dt>parse_status</dt>
                 <dd id="parseStatusValue" th:text="${result.parseStatus}"></dd>
+                <dt>provider</dt>
+                <dd th:text="${result.provider}"></dd>
+                <dt>model</dt>
+                <dd th:text="${result.model}"></dd>
                 <dt>async_submitted</dt>
                 <dd th:text="${result.asyncSubmitted}"></dd>
                 <dt>duplicate</dt>
@@ -395,8 +448,36 @@
         </div>
     </section>
 </main>
-<script>
+<script th:inline="javascript">
     (() => {
+        const configuredModelOptions = /*[[${modelOptionsByProvider}]]*/ {};
+        const defaultModelsByProvider = /*[[${defaultModelsByProvider}]]*/ {};
+        const providerSelect = document.getElementById('providerSelect');
+        const modelInput = document.getElementById('modelInput');
+        const modelOptionsList = document.getElementById('modelOptionsList');
+
+        if (providerSelect && modelInput && modelOptionsList) {
+            const escapeAttribute = (value) => String(value)
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;');
+
+            const renderModelOptions = (provider, resetModel) => {
+                const options = configuredModelOptions[provider] || [];
+                modelOptionsList.innerHTML = options
+                    .filter((option) => option && String(option).trim().length > 0)
+                    .map((option) => `<option value="${escapeAttribute(option)}"></option>`)
+                    .join('');
+                if (resetModel) {
+                    modelInput.value = defaultModelsByProvider[provider] || options[0] || '';
+                }
+            };
+
+            providerSelect.addEventListener('change', () => renderModelOptions(providerSelect.value, true));
+            renderModelOptions(providerSelect.value, false);
+        }
+
         const resultSection = document.querySelector('.result[data-capture-id]');
         if (!resultSection || resultSection.dataset.asyncSubmitted !== 'true') {
             return;

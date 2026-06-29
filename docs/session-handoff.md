@@ -5,7 +5,7 @@
 ## 当前状态
 
 - 当前 Milestone：Milestone 17「Provider 与模型治理」继续推进中。
-- 已完成：上传接口任务级 `provider` / `model` 选择、Consumer 按任务路由模型、`recognition_run` 识别运行记录、基础 provider/model 聚合统计 API、Gemini/OpenRouter token 用量解析与 token 聚合统计。
+- 已完成：上传接口任务级 `provider` / `model` 选择、上传页 provider/model 前端切换、配置化候选模型列表、Consumer 按任务路由模型、`recognition_run` 识别运行记录、基础 provider/model 聚合统计 API、Gemini/OpenRouter token 用量解析与 token 聚合统计。
 - 下一项未完成任务：Milestone 17 模型价格配置与成本估算，或同图多模型重识别与结果比较。
 - 工作区存在未提交改动；继续前先执行 `git status --short` 确认。
 
@@ -26,6 +26,8 @@
 - Provider 未返回 usage、Provider 不支持解析或原始响应不是 JSON 时，token 字段保持 `null`，不会导致识别任务失败。
 - `GET /api/v1/recognition-runs/stats` 现在按 provider/model 聚合返回 `inputTokens`、`outputTokens`、`totalTokens`，缺失 token 按 0 汇总。
 - `estimated_cost` 仍为预留字段，本轮未实现成本估算。
+- `/corpus/upload` 上传页已支持选择 `gemini` / `openrouter`，并根据 `app.gemini.model-options` 与 `app.openrouter.model-options` 展示候选模型；模型输入框仍允许手工填写候选项之外的模型名。
+- 页面 Controller 已把 `provider` / `model` 传入 `CorpusIngestionService.ingest(file, force, provider, model)`，上传结果区展示本次任务实际使用的 provider/model。
 
 ## 验证结果
 
@@ -45,6 +47,8 @@ mvn test
 - 当前链路说明：[current-chain-summary.md](current-chain-summary.md)
 - 后续优化记录：[future-optimization-notes.md](future-optimization-notes.md)
 - token 解析：`src/main/java/com/symptomgraph/service/RecognitionTokenUsageParser.java`
+- 上传页模型切换：`src/main/resources/templates/corpus-upload.html`
+- 上传页 Controller：`src/main/java/com/symptomgraph/controller/CorpusPageController.java`
 - 异步识别核心：`src/main/java/com/symptomgraph/mq/CorpusProcessMessageListener.java`
 - 同步重识别核心：`src/main/java/com/symptomgraph/service/impl/CorpusIngestionServiceImpl.java`
 - 识别运行记录：`src/main/java/com/symptomgraph/entity/RecognitionRun.java`

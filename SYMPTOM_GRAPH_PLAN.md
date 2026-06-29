@@ -406,6 +406,7 @@ GET /api/v1/corpus/{id}/image-url
 ### Milestone 17：Provider 与模型治理
 
 - [x] 支持接口级或任务级模型选择，而不仅是全局 `app.vision.provider`。
+- [x] 上传页支持前端选择 provider/model，并从配置读取候选模型。
 - [x] 记录每次识别使用的 provider、model 和耗时。
 - [x] 补充不同 Provider 响应中的 token 用量解析。
 - [ ] 补充模型价格配置与成本估算规则。
@@ -414,7 +415,7 @@ GET /api/v1/corpus/{id}/image-url
 
 建议优先级：中。该扩展能让项目更适合展示“多模型 Provider 策略”和模型治理能力。
 
-说明：Milestone 17 后台第一阶段已完成。`POST /api/v1/corpus/upload` 新增可选 `provider` / `model` 参数；未传时继续回退到全局 `app.vision.provider` 和对应默认模型。新图异步任务会把实际 provider/model 写入 `capture_record` 和 `CorpusProcessMessage`，RabbitMQ Consumer 通过 `VisionRecognitionOptions` 按任务选择 Provider 和模型，重试/死信消息也保留该选择；`force=true` 同步重识别同样使用本次请求的 provider/model。Gemini 与 OpenRouter Provider 已支持单次调用级模型覆盖，不修改全局配置对象。新增 `recognition_run` 表、Entity、Mapper、Service，用于记录每次识别运行的 provider、model、状态、item_count、started_at、finished_at、duration_ms、错误信息和原始响应，并预留 input/output/total tokens 与 estimated_cost 字段。新增 `RecognitionTokenUsageParser`，从 Gemini `usageMetadata.promptTokenCount` / `candidatesTokenCount` / `totalTokenCount` 和 OpenRouter `usage.prompt_tokens` / `completion_tokens` / `total_tokens` 中解析 token 用量；异步 Consumer 与 `force=true` 同步重识别都会在 `recognition_run` 收尾时写入 `input_tokens`、`output_tokens`、`total_tokens`。新增 `GET /api/v1/recognition-runs/stats`，按 provider/model 聚合调用次数、成功率、空结果率、失败率、平均耗时、输入 token 合计、输出 token 合计、总 token 合计和成本合计。当前成本估算仍未启用，`estimated_cost` 保持预留字段；同图多模型重识别、结果比较和采纳流程仍未实现。
+说明：Milestone 17 后台第一阶段已完成。`POST /api/v1/corpus/upload` 新增可选 `provider` / `model` 参数；未传时继续回退到全局 `app.vision.provider` 和对应默认模型。Thymeleaf 上传页 `/corpus/upload` 已新增 provider 下拉、model 候选输入和自定义模型输入能力，候选项由 `app.gemini.model-options` 与 `app.openrouter.model-options` 配置维护，切换 provider 时前端自动切换默认模型。新图异步任务会把实际 provider/model 写入 `capture_record` 和 `CorpusProcessMessage`，RabbitMQ Consumer 通过 `VisionRecognitionOptions` 按任务选择 Provider 和模型，重试/死信消息也保留该选择；`force=true` 同步重识别同样使用本次请求的 provider/model。Gemini 与 OpenRouter Provider 已支持单次调用级模型覆盖，不修改全局配置对象。新增 `recognition_run` 表、Entity、Mapper、Service，用于记录每次识别运行的 provider、model、状态、item_count、started_at、finished_at、duration_ms、错误信息和原始响应，并预留 input/output/total tokens 与 estimated_cost 字段。新增 `RecognitionTokenUsageParser`，从 Gemini `usageMetadata.promptTokenCount` / `candidatesTokenCount` / `totalTokenCount` 和 OpenRouter `usage.prompt_tokens` / `completion_tokens` / `total_tokens` 中解析 token 用量；异步 Consumer 与 `force=true` 同步重识别都会在 `recognition_run` 收尾时写入 `input_tokens`、`output_tokens`、`total_tokens`。新增 `GET /api/v1/recognition-runs/stats`，按 provider/model 聚合调用次数、成功率、空结果率、失败率、平均耗时、输入 token 合计、输出 token 合计、总 token 合计和成本合计。当前成本估算仍未启用，`estimated_cost` 保持预留字段；同图多模型重识别、结果比较和采纳流程仍未实现。
 
 后续路线图：Milestone 17 的下一步可在“模型价格配置与成本估算”和“同图多模型重识别”之间选择。成本估算应优先采用本地配置而不是外部实时价格源，使 `estimated_cost` 在价格信息稳定时再写入真实数据；同图多模型重识别允许同一张截图使用不同 provider/model 生成多次识别运行记录；再进一步实现模型结果比较与采纳流程，用于选择某次识别结果沉淀为正式语料。上述能力完成前，前台 UI 仅需保持最小调用入口，不提前设计复杂比较页面。
 
