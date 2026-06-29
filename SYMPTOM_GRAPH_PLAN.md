@@ -415,6 +415,8 @@ GET /api/v1/corpus/{id}/image-url
 
 说明：Milestone 17 后台第一阶段已完成。`POST /api/v1/corpus/upload` 新增可选 `provider` / `model` 参数；未传时继续回退到全局 `app.vision.provider` 和对应默认模型。新图异步任务会把实际 provider/model 写入 `capture_record` 和 `CorpusProcessMessage`，RabbitMQ Consumer 通过 `VisionRecognitionOptions` 按任务选择 Provider 和模型，重试/死信消息也保留该选择；`force=true` 同步重识别同样使用本次请求的 provider/model。Gemini 与 OpenRouter Provider 已支持单次调用级模型覆盖，不修改全局配置对象。新增 `recognition_run` 表、Entity、Mapper、Service，用于记录每次识别运行的 provider、model、状态、item_count、started_at、finished_at、duration_ms、错误信息和原始响应，并预留 input/output/total tokens 与 estimated_cost 字段。新增 `GET /api/v1/recognition-runs/stats`，按 provider/model 聚合调用次数、成功率、空结果率、失败率、平均耗时、token 合计和成本合计。当前 token/成本字段尚未从 Gemini/OpenRouter 响应中真实解析，后续应根据各 Provider 返回结构和价格配置补齐；同图多模型重识别、结果比较和采纳流程仍未实现。
 
+后续路线图：Milestone 17 的下一步优先补齐 token 用量解析与成本估算，使 `recognition_run.input_tokens`、`output_tokens`、`total_tokens` 和 `estimated_cost` 从预留字段变成真实可用数据，并让统计接口具备成本透明能力。随后推进同图多模型重识别，允许同一张截图使用不同 provider/model 生成多次识别运行记录；再进一步实现模型结果比较与采纳流程，用于选择某次识别结果沉淀为正式语料。上述能力完成前，前台 UI 仅需保持最小调用入口，不提前设计复杂比较页面。
+
 ### Milestone 18：简历与面试展示材料
 
 - [ ] 补充系统架构图，覆盖上传接口、OSS、RabbitMQ、Consumer、Provider、MySQL 和 Markdown 输出。
@@ -426,5 +428,7 @@ GET /api/v1/corpus/{id}/image-url
 - [ ] 准备 3 到 5 个真实截图演示样例，展示从上传到 Obsidian Markdown 输出的完整闭环。
 
 说明：第一阶段命名清晰化仅调整 Java 内部变量、私有方法和少量解释性注释，不修改数据库字段、API URL、JSON 字段或对外 DTO 字段。当前已将主链路中的任务表主键语义明确为 `captureTask`，将 `capture_id` 的内部语义明确为 `captureBatchId`，将旧 `corpus_record PROCESSING` 兼容路径命名为 `legacyProcessingCorpusRecord`，并在 Gemini/OpenRouter Provider、统一 JSON 解析器和 Markdown 导出服务中区分厂商响应体、模型正文、统一识别结果、Markdown 文件名、输出路径和正文内容。
+
+后续路线图：Milestone 18 优先补系统架构图和核心链路时序图，架构图覆盖上传接口、OSS、RabbitMQ、Consumer、Provider、MySQL、Markdown 输出和管理页；时序图区分新图、重复图、`force=true`、`EMPTY_RESULT`、模型失败重试和 DLQ 路径。随后准备项目讲解稿，重点突出图片 hash 去重、异步削峰、私有 OSS 证据链、多模型 Provider 策略、失败状态治理、人工校对和成本透明。真实演示样例以 3 到 5 张截图为第一阶段目标，必须来自真实平台截图，不伪造识别结果。
 
 建议优先级：中。该扩展不直接改变业务能力，但能显著提升项目展示效果。

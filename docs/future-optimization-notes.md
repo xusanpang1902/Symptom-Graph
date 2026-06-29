@@ -138,3 +138,61 @@ capture_record.process_status = EMPTY_RESULT
 - 真实截图样例和失败样例复盘。
 
 这些内容适合和 Milestone 18 的简历与面试展示材料一起推进。
+
+## 8. 推荐 Issue 拆分与优先级
+
+为便于后续 GitHub Issue 管理，当前未来路线图建议拆成以下任务。Issue 用来承载具体可验收任务，`SYMPTOM_GRAPH_PLAN.md` 继续作为总路线图和范围来源。
+
+### P0：当前收口与成本透明
+
+- `chore: commit current milestone 15-17 changes`
+  - 目标：提交当前已完成的查询管理、人工校对和 Provider 治理改动，避免后续开发继续混入同一批 diff。
+  - 验收：工作区关键业务改动已进入 Git 历史，commit message 能概括 Milestone 15/16/17 的主要能力。
+- `feat: parse token usage and estimate recognition cost`
+  - 目标：从 Gemini/OpenRouter 原始响应中解析 token usage，并根据模型价格配置估算调用成本。
+  - 验收：`recognition_run.input_tokens`、`output_tokens`、`total_tokens`、`estimated_cost` 可写入真实数据；`GET /api/v1/recognition-runs/stats` 可返回成本汇总；缺失 token 的模型不会导致识别任务失败。
+
+### P1：模型治理与展示材料
+
+- `feat: rerun capture recognition with selected model`
+  - 目标：支持同一截图使用指定 provider/model 重新识别，并生成新的 `recognition_run`。
+  - 验收：同一 `capture_record` 可保留多次识别运行记录，默认不破坏当前正式语料。
+- `feat: compare recognition results across models`
+  - 目标：展示同一截图在不同模型下的识别状态、评论数量、耗时和错误信息。
+  - 验收：后端能返回同一截图的多次识别结果对比数据；前端比较页面可后置。
+- `feat: add model result adoption workflow`
+  - 目标：允许人工选择某次识别结果作为正式语料来源。
+  - 验收：采纳动作必须明确，不因重识别自动覆盖正式语料；证据链字段保持可追溯。
+- `docs: add architecture and sequence diagrams`
+  - 目标：补充系统架构图和核心链路时序图。
+  - 验收：架构图覆盖上传接口、OSS、RabbitMQ、Consumer、Provider、MySQL、Markdown 输出；时序图区分新图、重复图、`force=true`、失败重试和 DLQ。
+- `docs: prepare project walkthrough script`
+  - 目标：准备项目讲解稿，突出工程亮点。
+  - 验收：讲解稿能覆盖图片去重、异步削峰、私有 OSS 证据链、多模型策略、失败状态治理、人工校对和成本透明。
+
+### P2：真实数据验证与链路韧性
+
+- `test: complete 20 real screenshot evaluation set`
+  - 目标：补足至少 20 张真实中文平台截图测试。
+  - 验收：记录成功样例、失败样例、模型误识别样例、空结果样例和 Prompt/Provider 问题总结；不能伪造测试结果。
+- `feat: add consumer idempotency guard`
+  - 目标：Consumer 处理前检查任务是否已进入终态，避免重复 MQ 消息导致重复识别或重复写入。
+  - 验收：`SUCCESS`、`EMPTY_RESULT`、最终失败任务不会被旧消息重复处理。
+- `feat: allow retry for empty recognition results`
+  - 目标：允许人工对 `EMPTY_RESULT` 任务重新投递识别。
+  - 验收：空结果可通过明确操作重试，不与自动失败重试混淆。
+- `feat: classify provider HTTP failures`
+  - 目标：细分限流、鉴权失败、模型不存在、请求格式错误和服务不可用等 Provider 错误。
+  - 验收：重试策略只自动重试真正可恢复的错误，配置错误进入可人工修复的失败状态。
+
+### P3：规模化与产品化
+
+- `feat: add full-text search backend`
+  - 目标：在真实数据量增长后评估 MySQL Full-Text 或 Elasticsearch。
+  - 验收：比当前 LIKE 检索更适合大规模语料搜索，并保持现有筛选 API 兼容。
+- `feat: add authentication and management authorization`
+  - 目标：为管理页和内部 API 增加认证授权。
+  - 验收：上传、管理、校对、重试和模型治理接口具备基本访问控制。
+- `feat: add budget dashboard UI`
+  - 目标：在前台展示模型成本、累计截图数、累计评论数和资料库成长指标。
+  - 验收：用户能看到成本透明和资料资产增长，但底层数据仍以 `recognition_run` 与 `corpus_record` 为准。

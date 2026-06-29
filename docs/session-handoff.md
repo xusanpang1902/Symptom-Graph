@@ -6,10 +6,18 @@
 
 - 当前 Milestone：Milestone 17「Provider 与模型治理」后台第一阶段已完成。
 - 已完成：上传接口任务级 `provider` / `model` 选择、Consumer 按任务路由模型、`recognition_run` 识别运行记录、基础 provider/model 聚合统计 API。
-- 下一项未完成任务：补充 Gemini/OpenRouter 响应中的 token 用量解析、价格配置与成本估算；之后再做同图多模型重识别、结果比较和采纳流程。
-- 工作区存在本 session 的未提交改动；继续前先执行 `git status --short` 确认。
+- 下一项未完成任务：Milestone 17 token 用量解析、价格配置与成本估算。
+- 工作区存在未提交改动；继续前先执行 `git status --short` 确认。
 
-## 本次完成
+## 推荐执行顺序
+
+1. 提交当前改动，建议 commit message 使用 `feat: add corpus management, review workflow, and model governance`。
+2. 将后续任务拆成 GitHub Issues，优先覆盖 token/成本估算、同图多模型重识别、结果比较与采纳、展示材料和真实截图测试集。
+3. 优先实现 Milestone 17 token/成本估算，让 `recognition_run` 的 token 与成本字段具备真实数据。
+4. 并行推进 Milestone 18 展示材料，先补架构图、核心链路时序图和项目讲解稿。
+5. 等用户提供足够真实截图后，再回补 Milestone 12 的 20 张截图质量评估，不能伪造测试结果。
+
+## 本次已完成能力
 
 - `POST /api/v1/corpus/upload` 新增可选参数 `provider` / `model`，旧调用不传参数时继续使用全局配置。
 - 新图异步任务将实际 provider/model 写入 `capture_record` 和 `CorpusProcessMessage`。
