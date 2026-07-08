@@ -12,6 +12,7 @@ import com.symptomgraph.dto.VisionRecognitionResult;
 import com.symptomgraph.entity.CaptureRecord;
 import com.symptomgraph.entity.CorpusRecord;
 import com.symptomgraph.entity.RecognitionRun;
+import com.symptomgraph.event.CaptureProcessingCompletedEvent;
 import com.symptomgraph.service.CaptureRecordService;
 import com.symptomgraph.service.CorpusRecordService;
 import com.symptomgraph.service.MarkdownExportService;
@@ -22,6 +23,7 @@ import com.symptomgraph.service.VisionRecognitionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -56,6 +58,7 @@ public class CorpusProcessMessageListener {
     private final CorpusRabbitMqProperties rabbitMqProperties;
     private final ObjectMapper objectMapper;
     private final RecognitionTokenUsageParser tokenUsageParser;
+    private final ApplicationEventPublisher eventPublisher;
 
     public CorpusProcessMessageListener(CaptureRecordService captureRecordService,
                                         CorpusRecordService corpusRecordService,
@@ -67,7 +70,8 @@ public class CorpusProcessMessageListener {
                                         CorpusProcessFailureClassifier failureClassifier,
                                         CorpusRabbitMqProperties rabbitMqProperties,
                                         ObjectMapper objectMapper,
-                                        RecognitionTokenUsageParser tokenUsageParser) {
+                                        RecognitionTokenUsageParser tokenUsageParser,
+                                        ApplicationEventPublisher eventPublisher) {
         this.captureRecordService = captureRecordService;
         this.corpusRecordService = corpusRecordService;
         this.ossStorageService = ossStorageService;
@@ -79,6 +83,7 @@ public class CorpusProcessMessageListener {
         this.rabbitMqProperties = rabbitMqProperties;
         this.objectMapper = objectMapper;
         this.tokenUsageParser = tokenUsageParser;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional
@@ -106,6 +111,7 @@ public class CorpusProcessMessageListener {
             if (recognizedCorpusRecords.isEmpty()) {
                 finishRecognitionRun(recognitionRun, STATUS_EMPTY_RESULT, 0, recognitionResult.getModelRawResponse(), null, null);
                 markCaptureEmpty(captureTask, recognitionResult);
+                publishCaptureCompleted(captureTask);
                 return;
             }
 
@@ -115,6 +121,7 @@ public class CorpusProcessMessageListener {
             finishRecognitionRun(recognitionRun, recognizedCorpusRecords.get(0).getParseStatus(),
                     recognizedCorpusRecords.size(), recognizedCorpusRecords.get(0).getModelRawResponse(), null, null);
             markCaptureCompleted(captureTask, recognizedCorpusRecords.get(0));
+            publishCaptureCompleted(captureTask);
         } catch (RuntimeException ex) {
             CorpusProcessFailure failure = failureClassifier.classify(ex);
             finishRecognitionRun(recognitionRun,
@@ -288,6 +295,7 @@ public class CorpusProcessMessageListener {
         }
 
         markFinalFailed(captureTask, legacyProcessingCorpusRecord, failure, nextRetryCount, failedAt);
+        publishCaptureCompleted(captureTask);
         CorpusProcessMessage deadLetterMessage = copyMessage(processMessage);
         deadLetterMessage.setRetryCount(nextRetryCount);
         deadLetterMessage.setLastErrorType(failure.errorType());
@@ -337,6 +345,17 @@ public class CorpusProcessMessageListener {
         captureTask.setLastFailedAt(null);
         captureTask.setUpdatedAt(now);
         captureRecordService.updateById(captureTask);
+    }
+
+    private void publishCaptureCompleted(CaptureRecord captureTask) {
+        if (captureTask == null) {
+            return;
+        }
+        eventPublisher.publishEvent(new CaptureProcessingCompletedEvent(
+                captureTask.getId(),
+                captureTask.getCaptureId(),
+                captureTask.getProcessStatus()
+        ));
     }
 
     private void markCaptureEmpty(CaptureRecord captureTask, VisionRecognitionResult recognitionResult) {

@@ -88,3 +88,25 @@ CREATE TABLE IF NOT EXISTS recognition_run (
     KEY idx_recognition_status (status),
     KEY idx_recognition_started_at (started_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='模型识别运行记录';
+
+CREATE TABLE IF NOT EXISTS feishu_ingestion_task (
+    id BIGINT NOT NULL COMMENT '主键',
+    event_id VARCHAR(128) NOT NULL COMMENT '飞书事件 ID',
+    message_id VARCHAR(128) NOT NULL COMMENT '飞书消息 ID',
+    chat_id VARCHAR(128) NULL COMMENT '飞书会话 ID',
+    sender_id VARCHAR(128) NULL COMMENT '飞书发送者 ID',
+    image_key VARCHAR(256) NOT NULL COMMENT '飞书图片资源 key',
+    capture_record_id BIGINT NULL COMMENT 'Symptom-Graph 截图任务 ID',
+    capture_id VARCHAR(64) NULL COMMENT 'Symptom-Graph 采集批次 ID',
+    image_hash VARCHAR(64) NULL COMMENT '图片 SHA-256',
+    status VARCHAR(32) NOT NULL COMMENT '飞书接入任务状态',
+    error_message TEXT NULL COMMENT '错误信息',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_feishu_event_id (event_id),
+    UNIQUE KEY uk_feishu_message_image (message_id, image_key),
+    KEY idx_feishu_capture_record (capture_record_id),
+    KEY idx_feishu_status (status),
+    KEY idx_feishu_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='飞书图片接入任务记录';

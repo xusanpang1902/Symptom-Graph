@@ -437,3 +437,17 @@ GET /api/v1/corpus/{id}/image-url
 建议优先级：中。该扩展不直接改变业务能力，但能显著提升项目展示效果。
 
 当前执行调整：Milestone 18 现在是面试展示前的最高优先级。用户将先输入真实图片材料并整理测试结果；系统侧优先围绕这些真实样例补齐架构图、时序图、讲解稿和演示闭环。成本估算、同图多模型比较和更复杂模型采纳流程均放到 Milestone 18 之后。
+
+### Milestone 19：飞书-Hermes 图片入口接入
+
+- [x] 新增 `POST /api/v1/feishu/events` 飞书事件入口，支持 `url_verification` 和 `im.message.receive_v1` 图片消息。
+- [x] 新增 `feishu_ingestion_task` 轻量任务表，记录 `event_id`、`message_id`、`chat_id`、`sender_id`、`image_key`、`capture_record_id`、`capture_id`、`image_hash` 和处理状态。
+- [x] 通过 `event_id` 与 `message_id + image_key` 做飞书事件幂等，避免飞书重试导致重复下载和重复识别。
+- [x] 飞书图片下载后复用现有 `CorpusIngestionService`，不重写 OSS、去重、RabbitMQ、Provider、MySQL 和 Markdown 主链路。
+- [x] RabbitMQ Consumer 在任务成功、空结果或最终失败后发布内部完成事件，飞书模块据此主动回复原会话。
+- [x] 回复内容采用“任务状态+摘要”：受理时返回 `captureRecordId` / `captureId`，完成后返回状态、语料条数、平台、标签概览和管理页链接。
+- [x] 新增飞书入口与编排单元测试。
+- [ ] 官方飞书 Java SDK 因当前环境无法解析 Maven Central，暂未直接接入；当前实现把飞书 OpenAPI 调用隔离在 `FeishuOpenApiClient`，后续可将 `RestClientFeishuOpenApiClient` 替换为 SDK 实现。
+- [ ] 飞书加密回调 `encrypt` 暂不支持，当前仅支持未加密回调并校验 `verification-token`。
+
+说明：Milestone 19 作为外部入口增强，不改变 Symptom-Graph 核心采集模型。飞书适配层只负责事件接收、图片资源下载、任务幂等、状态追踪和消息回复；核心识别仍由现有上传链路和异步 Consumer 完成。配置项新增 `app.feishu.enabled`、`app.feishu.app-id`、`app.feishu.app-secret`、`app.feishu.verification-token`、`app.feishu.encrypt-key`、`app.feishu.base-url` 和 `app.feishu.manage-base-url`，默认关闭。当前实现使用 Spring `RestClient` 调用飞书 tenant access token、消息图片资源下载和文本消息发送接口；若后续网络环境允许引入官方 SDK，只需替换 `FeishuOpenApiClient` 实现。

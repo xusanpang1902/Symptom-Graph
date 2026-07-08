@@ -4,50 +4,57 @@
 
 ## 当前状态
 
-- 当前最高优先级：Milestone 18，先完成面试展示闭环，而不是继续扩展成本估算或同图多模型比较。
-- 已完成：上传采集、OSS 证据链、RabbitMQ 异步识别、失败重试/DLQ、双表建模、查询管理、人工校对、Provider/model 任务级选择、token 用量解析、识别运行统计和语料分析工作台。
-- 已调整：Milestone 17 的“模型价格配置与成本估算”和“同图多模型重识别与结果比较”明确后移到 Milestone 18 之后。
-- 用户下一步：输入真实截图材料，并整理真实测试结果。
-- 系统下一步：围绕真实样例补齐架构图、核心链路时序图、项目讲解稿和展示材料。
-- 继续前先运行 `git status --short`，确认是否存在用户未提交改动。
+- 当前最高优先级原本是 Milestone 18 展示材料；本轮按用户要求新增 Milestone 19：飞书-Hermes 图片入口接入。
+- 已完成：上传采集、OSS 证据链、RabbitMQ 异步识别、失败重试/DLQ、双表建模、查询管理、人工校对、Provider/model 任务级选择、token 用量解析、识别运行统计、语料分析工作台，以及飞书图片入口初版。
+- 飞书入口当前通过 `POST /api/v1/feishu/events` 接收事件，支持飞书 `url_verification` 和未加密 `im.message.receive_v1` 图片消息。
+- 飞书图片消息会写入 `feishu_ingestion_task` 做幂等和追踪，下载图片后复用 `CorpusIngestionService`，后续仍走现有 OSS、RabbitMQ、Consumer、Provider、MySQL 和 Markdown 链路。
+- Consumer 完成 `capture_record` 后发布 `CaptureProcessingCompletedEvent`，飞书模块监听后主动回复原会话状态摘要。
 
-## 推荐下一步
+## 本次已完成
 
-1. 用户先准备 3 到 5 张真实截图作为面试演示样例，不需要一次性补满 20 张。
-2. 每张截图测试结果优先填写到 `docs/milestone-12-quality-evaluation.md` 的“第一阶段演示样例记录”表。
-3. 根据真实样例补 Milestone 18：系统架构图、核心链路时序图和项目讲解稿。
-4. 完成展示闭环后，再评估是否继续做成本估算、同图多模型比较、Elasticsearch、权限体系或 revision 历史表。
-
-## 本次已完成调整
-
-- 更新 `SYMPTOM_GRAPH_PLAN.md`：把成本估算和同图多模型比较从当前 Milestone 17 阻塞项调整为 Milestone 18 之后的增强项。
-- 更新 `docs/milestone-12-quality-evaluation.md`：新增 3 到 5 张真实截图的第一阶段演示样例记录表。
-- 更新 `docs/project-completeness-summary.md`：同步当前项目完整度，标明 Provider 治理展示闭环已基本完成，主要缺口转向真实样例和展示材料。
-- 覆盖更新本文档，明确下一阶段由用户输入真实图片材料，项目侧优先补展示材料。
-
-## 当前展示完整度判断
-
-- 作为 Java 后端面试项目，当前工程能力已经具备较高展示价值。
-- 主要亮点：图片 hash 去重、私有 OSS 证据链、RabbitMQ 异步削峰、失败重试/DLQ、双表任务建模、多 Provider 策略、token 用量解析、查询/校对/分析页面、Markdown/Obsidian 输出。
-- 当前最大缺口不是后端功能，而是真实截图样例、质量评估记录、架构图、时序图和讲解稿。
+- 新增飞书配置 `app.feishu.*`，默认 `FEISHU_ENABLED=false`。
+- 新增 `feishu_ingestion_task` schema 和迁移脚本 `src/main/resources/db/migration/20260708_add_feishu_ingestion_task.sql`。
+- 新增飞书适配层：`FeishuEventController`、`FeishuEventParser`、`FeishuImageIngestionService`、`FeishuReplyService`、`FeishuOpenApiClient` 和 `RestClientFeishuOpenApiClient`。
+- 修改 `CorpusProcessMessageListener`，在成功、空结果和最终失败后发布完成事件；重试中不通知飞书。
+- 新增测试：`FeishuEventControllerTest`、`FeishuImageIngestionServiceTest`，并更新 `CorpusProcessMessageListenerTest` 构造参数。
+- 更新 `SYMPTOM_GRAPH_PLAN.md` 和 `docs/current-chain-summary.md`，记录 Milestone 19 和飞书链路边界。
 
 ## 验证结果
 
-本轮仅调整路线图和文档，未修改业务代码。
-
-建议提交前执行：
+已通过：
 
 ```powershell
-git diff --check
+mvn test "-Dtest=FeishuEventControllerTest,FeishuImageIngestionServiceTest,CorpusProcessMessageListenerTest"
 ```
 
-如后续补充图表或讲解稿，不需要跑完整 `mvn test`；如修改业务代码或模板，再执行相关测试。
+结果：11 个测试通过。
 
-## 关键入口
+全量执行：
 
-- 项目计划：`SYMPTOM_GRAPH_PLAN.md`
-- 当前完整度总结：`docs/project-completeness-summary.md`
-- 真实截图测试与演示样例记录：`docs/milestone-12-quality-evaluation.md`
-- 当前链路说明：`docs/current-chain-summary.md`
-- 后续优化记录：`docs/future-optimization-notes.md`
-- 架构学习路线：`docs/architecture-learning-route.md`
+```powershell
+mvn test
+```
+
+结果：失败。失败点不是本轮飞书测试：
+
+- `CorpusRecordQueryIntegrationTest`：Testcontainers 找不到可用 Docker 环境。
+- `CorpusRecordReviewServiceTest`：既有 MyBatis-Plus lambda cache 问题，报 `can not find lambda cache for this entity [com.symptomgraph.entity.CorpusRecord]`。
+
+## 当前边界
+
+- 计划中用户偏好“官方飞书 SDK”，但当前环境无法解析 Maven Central，未能可靠拉取 SDK；实现已把飞书调用隔离在 `FeishuOpenApiClient`，后续可替换为官方 SDK 实现。
+- 当前飞书事件仅支持未加密回调，并校验 `verification-token`；`encrypt` 加密回调暂未实现。
+- 当前飞书入口不解析 provider/model 指令，默认使用系统全局视觉 Provider 配置。
+- 飞书多图消息按单个 `image_key` 任务模型预留，当前实现面向单图片消息事件。
+
+## 已知未提交变更
+
+- 本轮新增/修改：飞书入口代码、`CorpusProcessMessageListener`、配置、schema、迁移脚本、测试、`SYMPTOM_GRAPH_PLAN.md`、`docs/current-chain-summary.md`、本文档。
+- 进入本轮前已存在且未处理：`README.md` 修改、`nextPrompt.md` 删除、`src/main/resources/db/migration/20260629_add_corpus_review_columns.sql` 未跟踪。
+
+## 推荐下一步
+
+1. 在有 Docker 的环境重跑全量测试，或先单独修复/隔离现有 Testcontainers 依赖。
+2. 决定是否继续补飞书 `encrypt` 回调解密和官方 SDK 实现。
+3. 配置真实飞书应用后，用一张真实截图做端到端手工验收：飞书发图、bot 回复受理、后台识别、bot 回复摘要、管理页可检索。
+4. 若继续面试展示材料，回到 Milestone 18：架构图、时序图、讲解稿和真实样例记录。

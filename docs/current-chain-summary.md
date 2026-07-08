@@ -473,16 +473,41 @@ Consumer
 
 注释：核心采集链路依赖 `VisionRecognitionService` 抽象，不直接依赖 Gemini 或 OpenRouter。新增 Provider 时应实现 `VisionRecognitionProvider`，不要把模型厂商逻辑写回上传或 Consumer 主流程。
 
-## 12. 当前已知边界
+## 12. 飞书图片入口链路
+
+```text
+飞书 bot 收到图片消息
+-> POST /api/v1/feishu/events
+-> FeishuEventParser 校验 verification-token 并解析 image_key
+-> feishu_ingestion_task 做 event_id / message_id + image_key 幂等
+-> FeishuOpenApiClient 下载飞书图片资源
+-> 包装为 MultipartFile
+-> 复用 CorpusIngestionService.ingest(file, false, null, null)
+-> 新图进入既有 OSS + capture_record + RabbitMQ 异步链路
+-> Consumer 完成后发布 CaptureProcessingCompletedEvent
+-> FeishuReplyService 主动向原 chat_id 回复状态摘要
+```
+
+关键入口：
+
+| 入口 | 说明 |
+| --- | --- |
+| `POST /api/v1/feishu/events` | 飞书事件回调入口，默认由 `app.feishu.enabled=false` 关闭 |
+| `feishu_ingestion_task` | 飞书事件幂等与外部任务追踪表 |
+| `FeishuOpenApiClient` | 飞书 OpenAPI 调用边界，当前实现为 `RestClientFeishuOpenApiClient` |
+
+注释：飞书入口是外部适配层，不改变现有上传、去重、OSS、MQ、Provider、MySQL 和 Markdown 主链路。当前支持未加密飞书回调和 `verification-token` 校验；`encrypt` 加密回调和官方 SDK 直连实现留作后续替换点。
+
+## 13. 当前已知边界
 
 - 至少 20 张真实中文平台截图测试仍待补足，不能伪造测试结果。
 - `force=true` 处理已有图片时仍为同步重识别链路，用于保留“成功后才覆盖旧语料”的安全语义。
 - 旧 `POST /api/v1/corpus/{id}/retry` 和旧 `recordId` 消息兼容逻辑仍保留，用于历史失败记录和历史 MQ 消息。
 - Milestone 15 的分页、筛选、关键词检索和 Thymeleaf 管理页已完成初版。
 - Milestone 16 的人工校对流程已完成初版，但只保存最新人工修订版本，不保存每次修订历史。
-- 当前还没有一批多图上传、认证授权、任务级模型选择、Provider 质量统计或全文检索。
+- 当前还没有一批多图上传、完整认证授权、飞书加密回调、官方飞书 SDK 实现或全文检索。
 
-## 13. 后续开发提醒
+## 14. 后续开发提醒
 
 后续不要重复实现以下已完成能力：
 
@@ -493,5 +518,6 @@ Consumer
 - 前端 `capture_record` 状态轮询。
 - `GET /api/v1/corpus` 分页查询和 `/corpus/manage` 管理页。
 - `PATCH /api/v1/corpus/{id}/review` 人工校对初版。
+- `POST /api/v1/feishu/events` 飞书图片入口初版。
 
-建议下一阶段优先从 Milestone 17 的 Provider 与模型治理、Milestone 12 的真实截图质量评估或 Milestone 18 的展示材料中选择一个方向推进。
+建议下一阶段优先从 Milestone 12 的真实截图质量评估、Milestone 18 的展示材料或飞书加密回调/官方 SDK 替换中选择一个方向推进。

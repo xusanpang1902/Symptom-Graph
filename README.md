@@ -110,6 +110,14 @@ Redis Bloom Filter 默认关闭，未配置 Redis 时系统仍使用 MySQL 索�
 
 建表脚本位于 `src/main/resources/db/schema.sql`。
 
+如果你是在旧版本数据库上继续运行项目，`CREATE TABLE IF NOT EXISTS` 不会自动给已有表补新增字段。上传时报类似 `Unknown column 'review_status' in 'field list'` 时，说明当前 MySQL 的 `corpus_record` 表缺少 Milestone 16 的人工校对字段，先执行一次升级脚本：
+
+```sql
+source src/main/resources/db/migration/20260629_add_corpus_review_columns.sql;
+```
+
+如果使用 MySQL 客户端，也可以复制该文件内容到当前 `symptom_graph` 数据库执行。新建空库并执行 `schema.sql` 的场景不需要执行这个迁移脚本。
+
 ## 模型 Provider
 
 截图识别通过通用 `VisionRecognitionService` 接入，当前支持：
